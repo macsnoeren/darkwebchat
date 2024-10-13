@@ -1,0 +1,24 @@
+{
+  "name": "darkwebchat",
+  "version": "1.0.0",
+  "description": "Dark web chat to simulate an hacker chat on the darkweb for education purposes.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/macsnoeren/darkwebchat.git"
+  },
+  "author": "Maurice Snoeren",
+  "license": "GPL-3.0",
+  "bugs": {
+    "url": "https://github.com/macsnoeren/darkwebchat/issues"
+  },
+  "homepage": "https://github.com/macsnoeren/darkwebchat#readme",
+  "dependencies": {
+    "express": "^4.21.1",
+    "socket.io": "^4.8.0"
+  }
+}
