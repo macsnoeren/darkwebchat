@@ -46,7 +46,7 @@ function onWebsocketConnection () {
     username = getUrlVar("username");  
     password = getUrlVar("password");
 
-    let pattern = /^[a-zA-Z0-9]{4}[a-zA-Z0-9]+$/;
+    let pattern = /^[a-zA-Z0-9_ ]{4}[a-zA-Z0-9_ ]+$/;
     if ( !pattern.test(username) || !pattern.test(password) ) {
         alert("Something went wrong (#1)");
         logout();
@@ -154,12 +154,12 @@ function updateDisplay () {
     for (var i=0; i < chats.length; i++) {
         if ( selectedCompany == chats[i] ) {
             companyData[chats[i]].new = false;
-            $('#chats').append("<a onclick=\"selectedCompany=" + chats[i] + "; updateDisplay();\"><b style=\"background-color: #0F0; color: #000;\">" + chats[i] + "</b></a> | ");
+            $('#chats').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\"><b style=\"background-color: #0F0; color: #000;\">" + chats[i] + "</b></a> | ");
         } else {
             if ( companyData[chats[i]].new ) {
-                $('#chats').append("<a onclick=\"selectedCompany=" + chats[i] + "; updateDisplay();\"><b style=\"background-color: #0FF; color: #000;\">(*)</b>" + chats[i] + "</a> | ");    
+                $('#chats').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\"><b style=\"background-color: #0FF; color: #000;\">(*)</b>" + chats[i] + "</a> | ");    
             } else {
-                $('#chats').append("<a onclick=\"selectedCompany=" + chats[i] + "; updateDisplay();\">" + chats[i] + "</a> | ");    
+                $('#chats').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\">" + chats[i] + "</a> | ");    
             }
         }
     }

@@ -45,7 +45,7 @@ function onWebsocketConnection () {
     company = getUrlVar("company");  
     chatId  = getUrlVar("chatid");
 
-    let pattern = /^[a-zA-Z0-9]{4}[a-zA-Z0-9]+$/;
+    let pattern = /^[a-zA-Z0-9_ ]{4}[a-zA-Z0-9_ ]+$/;
     if ( !pattern.test(chatId) || !pattern.test(company) ) {
         alert("Something went wrong (#1)");
         logout();

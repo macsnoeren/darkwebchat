@@ -83,7 +83,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('chat-login', (msg) => {
-        let pattern = /^[a-zA-Z0-9]+$/;
+        let pattern = /^[a-zA-Z0-9_ ]+$/;
         if ( pattern.test(msg.chatid) && pattern.test(msg.company) ) {
             if ( socket._data.valid == false ) {
                 if ( msg.chatid in companieData ) { // Restore the data!
