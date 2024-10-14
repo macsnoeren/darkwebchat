@@ -33,7 +33,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('chat-message-darknet', (data) => { // {chatid, msg}
-        if ( hackerSocket.id == socket.id ) { // the hacker            
+        if ( data.chatid in companieData && hackerSocket != null && hackerSocket.id == socket.id ) { // the hacker            
             let chatMessage = {timestamp: getTimeStamp(), who: "darknet", chat: data.msg};
             console.log("send darknet");
             console.log("'"  + data.chatid + "'");
@@ -80,6 +80,13 @@ io.on('connection', (socket) => {
             socket.emit("get-company-data", companieData);
             socket.emit("timeleft", {timestamp: timeLeftStartDate.getTime()/1000, total: timeLeftTotalTime});
         }
+    });
+
+    socket.on('delete-chat', (chatid) => {
+        if ( chatid in companieData ) {
+            delete companieData[chatid];
+        }
+        socket.emit("get-company-data", companieData);
     });
 
     socket.on('chat-login', (msg) => {

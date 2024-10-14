@@ -86,6 +86,7 @@ function onWebsocketMessageDarkNet ( data ) {
 }
 
 function onWebsocketMessageCompany ( data ) {
+    console.log(data);
     $('#messages').append("<div style=\"padding: 10px; text-align: right;\"><b><i><small>(" + data.timestamp + ")</small><br/> " + data.company + ":</i></b> " + data.chat + "</div>");
     document.documentElement.scrollTop = document.documentElement.scrollHeight; 
 }
@@ -148,27 +149,36 @@ function getTimeLeftString (delta) {
     return days + "d " + hours + "h " + minutes + "m " + seconds + "s";
 }
 
+function deleteChat () {
+    if ( selectedCompany != -1 ) {
+        socket.emit('delete-chat', selectedCompany);
+    }
+    selectedCompany = -1;
+    updateDisplay();
+}
+
 function updateDisplay () {
     var chats = Object.keys(companyData);
-    $('#chats').html("");
+    $('#chatbar').html("");
     for (var i=0; i < chats.length; i++) {
         if ( selectedCompany == chats[i] ) {
             companyData[chats[i]].new = false;
-            $('#chats').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\"><b style=\"background-color: #0F0; color: #000;\">" + chats[i] + "</b></a> | ");
+            $('#chatbar').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\"><b style=\"background-color: #0F0; color: #000;\">" + chats[i] + "</b></a> | ");
         } else {
             if ( companyData[chats[i]].new ) {
-                $('#chats').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\"><b style=\"background-color: #0FF; color: #000;\">(*)</b>" + chats[i] + "</a> | ");    
+                $('#chatbar').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\"><b style=\"background-color: #0FF; color: #000;\">(*)</b>" + chats[i] + "</a> | ");    
             } else {
-                $('#chats').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\">" + chats[i] + "</a> | ");    
+                $('#chatbar').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\">" + chats[i] + "</a> | ");    
             }
         }
     }
 
+    $('#messages').html(""); // empty
     if ( selectedCompany in companyData ) { // something is selected populate the stuff
-        $('#messages').html(""); // empty
         c = companyData[selectedCompany];
         for ( var i=0; i < c.chat.length; i++ ) {
             var chat = c.chat[i];
+            chat.company = c.company;
             if ( chat.who == "darknet" ) {
                 onWebsocketMessageDarkNet ( chat );
             } else {

@@ -75,6 +75,20 @@ body{
     padding: 10px;
 }
 
+#chatbar {
+    font-family:Helvetica;
+    font-size:15px;
+    color: #000;
+    position: fixed;
+    left: 0;
+    top: 0;
+    background-color: #999;
+    border: solid 1px;
+    padding: 10px;
+    width: 800px;
+    cursor: pointer;
+}
+
 .box input{
     display:block;
     width:300px;
