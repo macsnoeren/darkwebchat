@@ -45,7 +45,7 @@ function onWebsocketConnection () {
     company = getUrlVar("company");  
     chatId  = getUrlVar("chatid");
 
-    let pattern = /^[a-zA-Z0-9_ ]{4}[a-zA-Z0-9_ ]+$/;
+    let pattern = /^[a-zA-Z0-9_\. ]{4}[a-zA-Z0-9_\. ]+$/;
     if ( !pattern.test(chatId) || !pattern.test(company) ) {
         alert("Something went wrong (#1)");
         logout();
@@ -81,13 +81,14 @@ function onWebsocketMessageCompany ( data ) {
 
 function onWebsocketTimeLeft ( data ) {
     timeleft = data
-    console.log("Got timeleft: " + timeleft);
+    console.log("Got timeleft: " + JSON.stringify(timeleft));
     setInterval(displayTimeLeft, 1000);
 }
 
 function displayTimeLeft() {
     var delta = getTimeLeft(timeleft.timestamp);
-    var timeLeftString = getTimeLeftString(timeleft.total - delta);
+    //var timeLeftString = getTimeLeftString(timeleft.total - delta);
+    var timeLeftString = getTimeLeftString(delta);
     $('#timeleft').html("Timeleft: "  + timeLeftString);
 }
 

@@ -10,7 +10,7 @@ var companieData = {};
 var hackerSocket = null;
 
 /*********** CONFIG ***********/
-const timeLeftStartDate = new Date("2024-10-31 13:00");
+const timeLeftStartDate = new Date("2024-10-31 14:00");
 const timeLeftTotalTime = 4 * 60 * 60;
 
 app.use(express.static('www'))
@@ -90,7 +90,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('chat-login', (msg) => {
-        let pattern = /^[a-zA-Z0-9_ ]+$/;
+        let pattern = /^[a-zA-Z0-9_\. ]+$/;
         if ( pattern.test(msg.chatid) && pattern.test(msg.company) ) {
             if ( socket._data.valid == false ) {
                 if ( msg.chatid in companieData ) { // Restore the data!

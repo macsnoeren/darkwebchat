@@ -46,7 +46,7 @@ function onWebsocketConnection () {
     username = getUrlVar("username");  
     password = getUrlVar("password");
 
-    let pattern = /^[a-zA-Z0-9_ ]{4}[a-zA-Z0-9_ ]+$/;
+    let pattern = /^[a-zA-Z0-9_\. ]{4}[a-zA-Z0-9_\. ]+$/;
     if ( !pattern.test(username) || !pattern.test(password) ) {
         alert("Something went wrong (#1)");
         logout();
@@ -99,7 +99,8 @@ function onWebsocketTimeLeft ( data ) {
 
 function displayTimeLeft() {
     var delta = getTimeLeft(timeleft.timestamp);
-    var timeLeftString = getTimeLeftString(timeleft.total - delta);
+    //var timeLeftString = getTimeLeftString(timeleft.total - delta);
+    var timeLeftString = getTimeLeftString(delta);
     $('#timeleft').html("Timeleft: "  + timeLeftString);
 }
 
