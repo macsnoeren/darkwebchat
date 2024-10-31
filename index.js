@@ -20,6 +20,15 @@ function getTimeStamp() {
     return d.getUTCDate() + "-" + d.getUTCMonth() + "-" + d.getUTCFullYear() + " " + d.getUTCHours() + ":" + d.getUTCMinutes() + ":" + d.getUTCSeconds();
 }
 
+function escape(htmlStr) {
+    return htmlStr.replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");        
+ 
+ }
+
 io.on('connection', (socket) => {
     console.log('a user connected');
     socket._data = {valid: false, company: "", chatid: "", chat: []}; // user data
@@ -33,6 +42,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('chat-message-darknet', (data) => { // {chatid, msg}
+        data.msg = escape(data.msg);
         if ( data.chatid in companieData && hackerSocket != null && hackerSocket.id == socket.id ) { // the hacker            
             let chatMessage = {timestamp: getTimeStamp(), who: "darknet", chat: data.msg};
             console.log("send darknet");
@@ -58,6 +68,8 @@ io.on('connection', (socket) => {
     });
 
     socket.on('chat-message-company', (msg) => {
+        msg = escape(msg);
+        console.log("MSG: "  + JSON.stringify(msg));
         if ( socket._data.valid ) {
             let chatMessage = {timestamp: getTimeStamp(), who: "company", chat: msg};
             socket._data.chat.push(chatMessage);
