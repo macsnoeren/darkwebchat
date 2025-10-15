@@ -164,12 +164,13 @@ function updateDisplay () {
     for (var i=0; i < chats.length; i++) {
         if ( selectedCompany == chats[i] ) {
             companyData[chats[i]].new = false;
-            $('#chatbar').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\"><b style=\"background-color: #0F0; color: #000;\">" + chats[i] + "</b></a> | ");
+	    console.log(companyData[chats[i]]);
+            $('#chatbar').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\"><b style=\"background-color: #0F0; color: #000;\">" + companyData[chats[i]].company + "</b></a> | ");
         } else {
             if ( companyData[chats[i]].new ) {
-                $('#chatbar').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\"><b style=\"background-color: #0FF; color: #000;\">(*)</b>" + chats[i] + "</a> | ");    
+                $('#chatbar').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\"><b style=\"background-color: #0FF; color: #000;\">(*)</b>" + companyData[chats[i]].company + "</a> | ");    
             } else {
-                $('#chatbar').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\">" + chats[i] + "</a> | ");    
+                $('#chatbar').append("<a onclick=\"selectedCompany='" + chats[i] + "'; updateDisplay();\">" + companyData[chats[i]].company + "</a> | ");    
             }
         }
     }
