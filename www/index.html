@@ -197,29 +197,50 @@
         <span class="t-title">breach-negotiation-portal.onion — 80×24</span>
       </div>
       <div class="terminal-body">
+
+        <!-- Static intro text -->
         <div class="terminal-output">
           <div>DarkNet Negotiation Portal v2.3.1 — Copyright DarkNet Operators</div>
           <div>Tor Circuit: <span style="color:var(--green)">ACTIEF</span>
             &nbsp; Encryptie: <span style="color:var(--green)">TLS 1.3</span>
             &nbsp; Anonimiteit: <span style="color:var(--green)">OK</span></div>
           <div>&nbsp;</div>
-          <div>Uw organisatie is gecompromitteerd. U heeft een unieke toegangscode</div>
-          <div>ontvangen in de breach-notificatie. Voer uw code hieronder in.</div>
+          <div>Voer uw unieke toegangscode en teamnaam in om de</div>
+          <div>onderhandeling te starten. Beide velden zijn verplicht.</div>
           <div>&nbsp;</div>
         </div>
-        <div class="terminal-input-row">
+
+        <!-- Dynamic output lines (server responses appear here) -->
+        <div id="terminal-dynamic"></div>
+
+        <!-- Step 1: token input (always visible) -->
+        <div id="step-token" class="terminal-input-row">
           <span class="t-prompt">guest@darknet:~$&nbsp;</span>
           <span class="t-cmd">connect --code&nbsp;</span>
           <input type="text" id="token-input" class="t-input"
                  placeholder="XXXX-XXXX" maxlength="9"
                  autocomplete="off" spellcheck="false"
-                 onkeydown="if(event.key==='Enter') connectToken()">
+                 onkeydown="if(event.key==='Enter') submitStep()">
           <span class="t-cursor blink">█</span>
         </div>
+
+        <!-- Step 2: team name input (shown after valid token) -->
+        <div id="step-team" class="terminal-input-row" style="display:none">
+          <span class="t-prompt">guest@darknet:~$&nbsp;</span>
+          <span class="t-cmd">identify --team&nbsp;</span>
+          <input type="text" id="team-input" class="t-input"
+                 placeholder="Naam van uw team"
+                 maxlength="40"
+                 autocomplete="off" spellcheck="false"
+                 onkeydown="if(event.key==='Enter') submitStep()">
+          <span class="t-cursor blink">█</span>
+        </div>
+
         <div id="token-error" class="terminal-error"></div>
       </div>
+
       <div class="terminal-footer">
-        <button id="connect-btn" onclick="connectToken()">VERBINDING MAKEN →</button>
+        <button id="connect-btn" onclick="submitStep()">VERBINDING MAKEN →</button>
       </div>
     </div>
   </div>
@@ -256,7 +277,7 @@
       setInterval(draw, 40);
     })();
 
-    // Auto-format token: XXXX-XXXX
+    // Auto-format token input: XXXX-XXXX
     document.getElementById('token-input').addEventListener('input', function () {
       var v = this.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
       if (v.length > 4) v = v.slice(0, 4) + '-' + v.slice(4, 8);
