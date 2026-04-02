@@ -49,21 +49,21 @@ if (tokenCount.n === 0) {
   const ins = db.prepare("INSERT OR IGNORE INTO tokens (token, company, chatId) VALUES (?, ?, ?)");
   const seed = db.transaction((rows) => { rows.forEach((r) => ins.run(...r)); });
   seed([
-    ["RABO-A7X2", "Rabobank N.V.",       "dS5kiwjV2VMSi2jJlxPewYC4U"],
-    ["ING0-B3K9", "ING Groep N.V.",      "qXDY7Sz1d1XGc4BRpGeymuGWZ"],
-    ["ABNM-C5R1", "ABN AMRO Bank N.V.",  "dOsW8EPTqpcsmmq4KBcqeE3cS"],
-    ["PHLI-D8J4", "Philips N.V.",         "P048tdEMCBuwb17KBY66UxmV2"],
-    ["SHLL-E2M7", "Shell plc",            "JB0okKxSoifhL16hr0XW6wBfE"],
-    ["ASML-F6N3", "ASML Holding N.V.",   "QxBqArvo2BF5zFo5Gd2RwIL5I"],
-    ["UNVR-G9P0", "Unilever N.V.",        "PkMPKEbYzM0F6kFAIImVfXLgB"],
-    ["HEIN-H1Q5", "Heineken N.V.",        "LrvF8yLqqWhPShi0ap8dKgRsc"],
-    ["WKLU-I4S8", "Wolters Kluwer N.V.", "puIjJM5XkZrRk9J28x5U60xq0"],
-    ["NNGI-J7T2", "NN Group N.V.",        "vJBTtf6HlHh36GsWRSy1RMjEA"],
-    ["PTNL-K0V6", "PostNL N.V.",          "a6edzXzjsUfwM3mMbIFHKH7Af"],
-    ["NSNL-L3W9", "NS Groep N.V.",        "jjCC6XbfY7ylgWVmfIUHuVoxj"],
-    ["KPNL-M5X1", "KPN N.V.",             "kjsdlHkbU8DhoFmQRXuYvLgGu"],
-    ["CLBL-N8Y4", "Coolblue B.V.",        "9t7pkyGlWV9Z6Hi0gZcZCrJBw"],
-    ["BOLC-O2Z7", "Bol.com B.V.",         "LcdM2htAXqAEE8rCaUbSLpJKa"],
+    ["RABO-A7X2", "Rabo-Banko International", "dS5kiwjV2VMSi2jJlxPewYC4U"],
+    ["ING0-B3K9", "INGA-Global Services",    "qXDY7Sz1d1XGc4BRpGeymuGWZ"],
+    ["ABNM-C5R1", "ABN-AMRE Finance",        "dOsW8EPTqpcsmmq4KBcqeE3cS"],
+    ["PHLI-D8J4", "Philps Electro-Tech",     "P048tdEMCBuwb17KBY66UxmV2"],
+    ["SHLL-E2M7", "Shill Petroleum",         "JB0okKxSoifhL16hr0XW6wBfE"],
+    ["ASML-F6N3", "AS-ML Litho Systems",     "QxBqArvo2BF5zFo5Gd2RwIL5I"],
+    ["UNVR-G9P0", "Unilyver Consumer Goods", "PkMPKEbYzM0F6kFAIImVfXLgB"],
+    ["HEIN-H1Q5", "Heyneken Breweries",      "LrvF8yLqqWhPShi0ap8dKgRsc"],
+    ["WKLU-I4S8", "Wolters-Kleuwer Ltd.",    "puIjJM5XkZrRk9J28x5U60xq0"],
+    ["NNGI-J7T2", "N-N Insurances",          "vJBTtf6HlHh36GsWRSy1RMjEA"],
+    ["PTNL-K0V6", "P0st-NL Logistics",       "a6edzXzjsUfwM3mMbIFHKH7Af"],
+    ["NSNL-L3W9", "N-S Railways",            "jjCC6XbfY7ylgWVmfIUHuVoxj"],
+    ["KPNL-M5X1", "K-P-N Telecom",           "kjsdlHkbU8DhoFmQRXuYvLgGu"],
+    ["CLBL-N8Y4", "Cool-Blue Retail",        "9t7pkyGlWV9Z6Hi0gZcZCrJBw"],
+    ["BOLC-O2Z7", "Bol-Webshop",             "LcdM2htAXqAEE8rCaUbSLpJKa"],
   ]);
 }
 
