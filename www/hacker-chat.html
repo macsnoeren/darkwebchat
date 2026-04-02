@@ -14,47 +14,107 @@
     <div style="font-size:11px;color:var(--text-dim);">Beveiligde verbinding opzetten...</div>
   </div>
 
-  <!-- Sidebar: company list -->
+  <!-- ── SIDEBAR ─────────────────────────────────────────── -->
   <aside class="hacker-sidebar">
     <div class="sidebar-header">
       <div class="sidebar-title">DARKNET OPERATORS</div>
       <div id="sidebar-agent" class="sidebar-agent">Agent: —</div>
       <div id="hacker-timer" class="sidebar-timer">--:--:--</div>
     </div>
-    <div class="sidebar-stats">
+
+    <!-- Tab switcher -->
+    <div class="sidebar-tabs">
+      <button id="tab-chats"  class="sidebar-tab active" onclick="switchTab('chats')">CHATS</button>
+      <button id="tab-tokens" class="sidebar-tab"        onclick="switchTab('tokens')">TOKENS</button>
+    </div>
+
+    <!-- Stats (chats tab) -->
+    <div id="sidebar-stats" class="sidebar-stats">
       <span>Actief: <span id="active-count">0</span></span>
       <span>Ongelezen: <span id="unread-count">0</span></span>
     </div>
+
+    <!-- Company list (chats tab) -->
     <div id="companies-list" class="companies-list">
-      <div class="empty-state">Wachten op doelwitten...</div>
+      <div class="empty-state" style="padding:20px;font-size:11px;">Wachten op doelwitten...</div>
+    </div>
+
+    <!-- Token list (tokens tab, hidden by default) -->
+    <div id="tokens-panel" class="tokens-panel" style="display:none">
+      <div class="token-create-form">
+        <div class="token-form-title">NIEUWE TOKEN AANMAKEN</div>
+        <input type="text" id="new-token"   class="token-input-field" placeholder="CODE (bijv. TEST-X1Y2)" maxlength="9">
+        <input type="text" id="new-company" class="token-input-field" placeholder="Bedrijfsnaam">
+        <button class="token-create-btn" onclick="createToken()">+ AANMAKEN</button>
+        <div id="token-admin-error" class="token-admin-error"></div>
+      </div>
+      <div id="tokens-list" class="tokens-list">
+        <div style="padding:12px;color:var(--text-dim);font-size:11px;">Laden...</div>
+      </div>
     </div>
   </aside>
 
-  <!-- Main: chat area -->
+  <!-- ── MAIN CONTENT ────────────────────────────────────── -->
   <main class="hacker-main">
-    <div class="hacker-chat-header">
-      <div>
-        <div id="hacker-chat-target" class="hacker-chat-target">Selecteer een doelwit</div>
-        <div id="hacker-chat-subtitle" class="hacker-chat-subtitle">Kies een organisatie uit de lijst</div>
+
+    <!-- Chat view (default) -->
+    <div id="view-chat" class="view-panel">
+      <div class="hacker-chat-header">
+        <div>
+          <div id="hacker-chat-target" class="hacker-chat-target">Selecteer een doelwit</div>
+          <div id="hacker-chat-subtitle" class="hacker-chat-subtitle">Kies een organisatie uit de lijst</div>
+        </div>
+        <div class="hacker-controls">
+          <button class="ctrl-btn" onclick="copyLastMessage()">KOPIEER</button>
+          <button class="ctrl-btn danger" onclick="deleteChat()">VERWIJDER CHAT</button>
+        </div>
       </div>
-      <div class="hacker-controls">
-        <button class="ctrl-btn" onclick="copyLastMessage()">KOPIEER</button>
-        <button class="ctrl-btn danger" onclick="deleteChat()">VERWIJDER CHAT</button>
+
+      <div id="hacker-messages" class="hacker-messages">
+        <div class="empty-state">
+          <div>[ DARKNET OPERATORS ]</div>
+          <div style="font-size:10px;margin-top:8px;">Selecteer een organisatie om de onderhandeling te starten</div>
+        </div>
+      </div>
+
+      <form id="hacker-form" class="hacker-form" style="display:none">
+        <input type="text" id="hacker-input" class="hacker-input"
+               placeholder="Typ uw bericht als operator..." autocomplete="off">
+        <button type="submit" id="hacker-send-btn" class="hacker-send-btn" disabled>VERZENDEN</button>
+      </form>
+    </div>
+
+    <!-- Tokens view (hidden by default) -->
+    <div id="view-tokens" class="view-panel" style="display:none">
+      <div class="hacker-chat-header">
+        <div>
+          <div class="hacker-chat-target">TOKEN BEHEER</div>
+          <div class="hacker-chat-subtitle">Overzicht van alle toegangscodes — actief en inactief</div>
+        </div>
+        <div class="hacker-controls">
+          <button class="ctrl-btn" onclick="refreshTokens()">↻ VERNIEUWEN</button>
+        </div>
+      </div>
+
+      <div class="tokens-table-wrap">
+        <table class="tokens-table" id="tokens-table">
+          <thead>
+            <tr>
+              <th>TOKEN</th>
+              <th>BEDRIJF</th>
+              <th>TEAMNAAM</th>
+              <th>STATUS</th>
+              <th>BERICHTEN</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tokens-table-body">
+            <tr><td colspan="6" style="color:var(--text-dim);text-align:center;padding:20px;">Laden...</td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
 
-    <div id="hacker-messages" class="hacker-messages">
-      <div class="empty-state">
-        <div>[ DARKNET OPERATORS ]</div>
-        <div style="font-size:10px;margin-top:8px;">Selecteer een organisatie om de onderhandeling te starten</div>
-      </div>
-    </div>
-
-    <form id="hacker-form" class="hacker-form" style="display:none">
-      <input type="text" id="hacker-input" class="hacker-input"
-             placeholder="Typ uw bericht als operator..." autocomplete="off">
-      <button type="submit" id="hacker-send-btn" class="hacker-send-btn" disabled>VERZENDEN</button>
-    </form>
   </main>
 
   <script src="/socket.io/socket.io.js"></script>

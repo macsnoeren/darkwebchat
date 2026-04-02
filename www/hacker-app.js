@@ -11,7 +11,6 @@ function escapeHtml(str) {
   return d.innerHTML;
 }
 
-// Detect which page we are on
 var isLoginPage = !!document.getElementById("hacker-login-form");
 var isDashboard = !!document.getElementById("companies-list");
 
@@ -56,13 +55,14 @@ if (isDashboard) {
     window.location.href = "hacker-login.html";
   }
 
-  var companyData    = {};   // { [chatId]: { company, chat: [] } }
+  var companyData    = {};
   var selectedChatId = null;
-  var unreadCounts   = {};   // { [chatId]: number }
+  var unreadCounts   = {};
   var timeleft       = null;
   var timerInterval  = null;
+  var activeTab      = "chats";
 
-  // ── Connect + authenticate ───────────────────────────────
+  // ── Connect + authenticate ──────────────────────────────
   socket.on("connect", function () {
     socket.emit("hacker-login", { username: username, password: password });
   });
@@ -84,20 +84,23 @@ if (isDashboard) {
 
     startTimer(timeleft);
     updateSidebar();
+    socket.emit("admin-get-tokens");
 
     var overlay = document.getElementById("connecting-overlay");
     if (overlay) overlay.style.display = "none";
   });
 
-  // ── New company connected ────────────────────────────────
+  // ── Nieuwe company verbonden ─────────────────────────────
   socket.on("new-company", function (data) {
-    companyData[data.chatId] = { company: data.company, chat: data.chat || [] };
+    companyData[data.chatId] = { company: data.company, teamName: data.teamName || "", chat: data.chat || [] };
     unreadCounts[data.chatId] = 1;
     updateSidebar();
     playBeep();
+    // Vernieuw token-overzicht zodat status bijgewerkt wordt
+    socket.emit("admin-get-tokens");
   });
 
-  // ── Incoming message (company or darknet from another operator) ──
+  // ── Binnenkomend bericht ─────────────────────────────────
   socket.on("update-chat", function (data) {
     var chatId = data.chatId;
     var msg    = data.msg;
@@ -105,7 +108,6 @@ if (isDashboard) {
 
     companyData[chatId].chat.push(msg);
 
-    // Count unread only for company messages when this chat isn't selected
     if (msg.who === "company" && chatId !== selectedChatId) {
       unreadCounts[chatId] = (unreadCounts[chatId] || 0) + 1;
       playBeep();
@@ -114,22 +116,165 @@ if (isDashboard) {
     updateSidebar();
 
     if (chatId === selectedChatId) {
-      appendMessage(msg);
+      appendChatMessage(msg);
     }
   });
 
-  // ── Chat deleted (by another operator) ──────────────────
+  // ── Chat verwijderd (door andere operator) ───────────────
   socket.on("chat-deleted", function (data) {
     delete companyData[data.chatId];
     delete unreadCounts[data.chatId];
     if (selectedChatId === data.chatId) {
       selectedChatId = null;
-      showEmptyState();
+      showEmptyChat();
     }
     updateSidebar();
+    socket.emit("admin-get-tokens");
   });
 
-  // ── Timer ────────────────────────────────────────────────
+  // ================================================================
+  // ADMIN: TOKEN BEHEER
+  // ================================================================
+
+  socket.on("admin-tokens-data", function (tokens) {
+    renderTokensTable(tokens);
+    renderTokensSidebar(tokens);
+  });
+
+  socket.on("admin-token-created", function () {
+    socket.emit("admin-get-tokens");
+    var errEl = document.getElementById("token-admin-error");
+    if (errEl) { errEl.style.color = "var(--green)"; errEl.textContent = "\u2713 Token aangemaakt."; }
+    document.getElementById("new-token").value   = "";
+    document.getElementById("new-company").value = "";
+    setTimeout(function () { if (errEl) errEl.textContent = ""; }, 3000);
+  });
+
+  socket.on("admin-token-deleted", function () {
+    socket.emit("admin-get-tokens");
+  });
+
+  socket.on("admin-error", function (data) {
+    var errEl = document.getElementById("token-admin-error");
+    if (errEl) { errEl.style.color = "var(--red)"; errEl.textContent = "\u2717 " + data.message; }
+  });
+
+  // Token aanmaken
+  window.createToken = function () {
+    var token   = (document.getElementById("new-token").value || "").trim().toUpperCase();
+    var company = (document.getElementById("new-company").value || "").trim();
+    var errEl   = document.getElementById("token-admin-error");
+    if (errEl) errEl.textContent = "";
+
+    // Auto-formatteer: voeg koppelteken in
+    token = token.replace(/[^A-Z0-9]/g, "");
+    if (token.length > 4) token = token.slice(0, 4) + "-" + token.slice(4, 8);
+    document.getElementById("new-token").value = token;
+
+    if (!token || !company) {
+      if (errEl) { errEl.style.color = "var(--red)"; errEl.textContent = "Vul zowel token als bedrijfsnaam in."; }
+      return;
+    }
+    socket.emit("admin-create-token", { token: token, company: company });
+  };
+
+  // Token verwijderen
+  window.deleteToken = function (token) {
+    if (!confirm("Token " + token + " verwijderen?")) return;
+    socket.emit("admin-delete-token", { token: token });
+  };
+
+  // Vernieuwen
+  window.refreshTokens = function () {
+    socket.emit("admin-get-tokens");
+  };
+
+  // Auto-format nieuwe token input
+  setTimeout(function () {
+    var inp = document.getElementById("new-token");
+    if (inp) {
+      inp.addEventListener("input", function () {
+        var v = this.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+        if (v.length > 4) v = v.slice(0, 4) + "-" + v.slice(4, 8);
+        this.value = v;
+      });
+    }
+  }, 100);
+
+  // Render tokentabel in het hoofdpaneel
+  function renderTokensTable(tokens) {
+    var tbody = document.getElementById("tokens-table-body");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    if (!tokens || tokens.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text-dim);text-align:center;padding:20px;">Geen tokens gevonden</td></tr>';
+      return;
+    }
+
+    tokens.forEach(function (t) {
+      var tr = document.createElement("tr");
+      tr.className = t.active ? "token-row-active" : "";
+      tr.innerHTML =
+        '<td class="td-token">' + escapeHtml(t.token) + '</td>' +
+        '<td>' + escapeHtml(t.company) + '</td>' +
+        '<td>' + (t.teamName ? escapeHtml(t.teamName) : '<span style="color:var(--text-dim)">—</span>') + '</td>' +
+        '<td>' + (t.active
+          ? '<span class="badge-active">ACTIEF</span>'
+          : '<span class="badge-inactive">WACHT</span>') + '</td>' +
+        '<td style="text-align:center">' + (t.active ? t.messageCount : '—') + '</td>' +
+        '<td><button class="token-del-btn" onclick="deleteToken(\'' + escapeHtml(t.token) + '\')">\u2715</button></td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  // Render compacte tokenlijst in de zijbalk (tokens tab)
+  function renderTokensSidebar(tokens) {
+    var list = document.getElementById("tokens-list");
+    if (!list) return;
+    list.innerHTML = "";
+
+    if (!tokens || tokens.length === 0) {
+      list.innerHTML = '<div style="padding:12px;color:var(--text-dim);font-size:11px;">Geen tokens</div>';
+      return;
+    }
+
+    tokens.forEach(function (t) {
+      var item = document.createElement("div");
+      item.className = "token-list-item " + (t.active ? "token-active" : "");
+      item.innerHTML =
+        '<div class="token-code">' + escapeHtml(t.token) + '</div>' +
+        '<div class="token-meta">' + escapeHtml(t.company) + '</div>' +
+        (t.teamName ? '<div class="token-team">' + escapeHtml(t.teamName) + '</div>' : '') +
+        '<button class="token-del-btn-sm" onclick="deleteToken(\'' + escapeHtml(t.token) + '\')">\u2715</button>';
+      list.appendChild(item);
+    });
+  }
+
+  // ================================================================
+  // TAB SWITCHING
+  // ================================================================
+
+  window.switchTab = function (tab) {
+    activeTab = tab;
+
+    document.getElementById("tab-chats").classList.toggle("active",  tab === "chats");
+    document.getElementById("tab-tokens").classList.toggle("active", tab === "tokens");
+
+    document.getElementById("sidebar-stats").style.display = tab === "chats"  ? "flex"  : "none";
+    document.getElementById("companies-list").style.display= tab === "chats"  ? "block" : "none";
+    document.getElementById("tokens-panel").style.display  = tab === "tokens" ? "flex"  : "none";
+
+    document.getElementById("view-chat").style.display     = tab === "chats"  ? "flex"  : "none";
+    document.getElementById("view-tokens").style.display   = tab === "tokens" ? "flex"  : "none";
+
+    if (tab === "tokens") socket.emit("admin-get-tokens");
+  };
+
+  // ================================================================
+  // TIMER
+  // ================================================================
+
   function startTimer(tl) {
     timeleft = tl;
     if (timerInterval) clearInterval(timerInterval);
@@ -144,7 +289,7 @@ if (isDashboard) {
     var h   = Math.floor((remaining % 86400) / 3600);
     var m   = Math.floor((remaining % 3600) / 60);
     var s   = remaining % 60;
-    var pad = function(n) { return String(n).padStart(2, "0"); };
+    var pad = function (n) { return String(n).padStart(2, "0"); };
     var el  = document.getElementById("hacker-timer");
     if (el) {
       el.textContent = d > 0
@@ -153,7 +298,10 @@ if (isDashboard) {
     }
   }
 
-  // ── Select company ───────────────────────────────────────
+  // ================================================================
+  // BEDRIJF SELECTEREN
+  // ================================================================
+
   window.selectCompany = function (chatId) {
     selectedChatId       = chatId;
     unreadCounts[chatId] = 0;
@@ -162,9 +310,11 @@ if (isDashboard) {
 
     var targetEl   = document.getElementById("hacker-chat-target");
     var subtitleEl = document.getElementById("hacker-chat-subtitle");
-    if (targetEl)   targetEl.textContent   = companyData[chatId].company;
+    var data       = companyData[chatId] || {};
+    if (targetEl)   targetEl.textContent   = data.company || chatId;
     if (subtitleEl) subtitleEl.textContent =
-      companyData[chatId].chat.length + " berichten \u2502 ChatID: " + chatId;
+      (data.teamName ? "Team: " + data.teamName + " \u2502 " : "") +
+      (data.chat ? data.chat.length : 0) + " berichten";
 
     var form    = document.getElementById("hacker-form");
     var sendBtn = document.getElementById("hacker-send-btn");
@@ -177,28 +327,26 @@ if (isDashboard) {
     if (!container) return;
     container.innerHTML = "";
     var chat = (companyData[chatId] || {}).chat || [];
-    chat.forEach(function(msg) { appendMessage(msg); });
+    chat.forEach(function (msg) { appendChatMessage(msg); });
   }
 
-  function appendMessage(msg) {
+  function appendChatMessage(msg) {
     var container = document.getElementById("hacker-messages");
     if (!container) return;
-
-    var div    = document.createElement("div");
+    var div = document.createElement("div");
     div.className = "message " + msg.who;
-    var sender = msg.who === "darknet" ? "DarkNet Operator" : msg.company;
+    var sender = msg.who === "darknet" ? "DarkNet Operator" : (msg.company || "Bedrijf");
     div.innerHTML =
       '<div class="message-header">' +
         '<span class="message-sender">' + escapeHtml(sender) + '</span>' +
         '<span class="message-time">' + escapeHtml(msg.timestamp) + '</span>' +
       '</div>' +
       '<div class="message-bubble">' + escapeHtml(msg.chat) + '</div>';
-
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
   }
 
-  function showEmptyState() {
+  function showEmptyChat() {
     var container  = document.getElementById("hacker-messages");
     var targetEl   = document.getElementById("hacker-chat-target");
     var subtitleEl = document.getElementById("hacker-chat-subtitle");
@@ -213,13 +361,13 @@ if (isDashboard) {
   }
 
   function updateSidebar() {
-    var list   = document.getElementById("companies-list");
-    var ids    = Object.keys(companyData);
+    var list     = document.getElementById("companies-list");
+    var ids      = Object.keys(companyData);
     var countEl  = document.getElementById("active-count");
     var unreadEl = document.getElementById("unread-count");
 
     if (countEl)  countEl.textContent  = ids.length;
-    if (unreadEl) unreadEl.textContent = Object.values(unreadCounts).reduce(function(a,b){return a+b;}, 0);
+    if (unreadEl) unreadEl.textContent = Object.values(unreadCounts).reduce(function (a, b) { return a + b; }, 0);
 
     if (!list) return;
     list.innerHTML = "";
@@ -230,27 +378,25 @@ if (isDashboard) {
     }
 
     ids.forEach(function (chatId) {
-      var company = companyData[chatId].company;
-      var msgs    = companyData[chatId].chat.length;
-      var unread  = unreadCounts[chatId] || 0;
+      var data     = companyData[chatId] || {};
+      var unread   = unreadCounts[chatId] || 0;
       var isActive = chatId === selectedChatId;
       var hasNew   = unread > 0;
 
-      var item      = document.createElement("div");
-      item.className = "company-list-item" +
-        (isActive ? " active" : "") + (hasNew ? " has-new" : "");
-      item.onclick  = function() { selectCompany(chatId); };
+      var item = document.createElement("div");
+      item.className = "company-list-item" + (isActive ? " active" : "") + (hasNew ? " has-new" : "");
+      item.onclick   = function () { selectCompany(chatId); };
       item.innerHTML =
-        '<div class="company-list-name">' + escapeHtml(company) + '</div>' +
+        '<div class="company-list-name">' + escapeHtml(data.company || chatId) + '</div>' +
         '<div class="company-list-meta">' +
-          '<span>' + msgs + ' berichten</span>' +
-          (unread > 0 ? '<span class="company-list-unread">+' + unread + ' nieuw</span>' : '') +
+          '<span>' + (data.teamName ? escapeHtml(data.teamName) : "\u2014") + '</span>' +
+          (unread > 0 ? '<span class="company-list-unread">+' + unread + ' nieuw</span>' : '<span>' + (data.chat ? data.chat.length : 0) + ' bericht(en)</span>') +
         '</div>';
       list.appendChild(item);
     });
   }
 
-  // ── Send message ─────────────────────────────────────────
+  // ── Bericht versturen ────────────────────────────────────
   var hackerForm  = document.getElementById("hacker-form");
   var hackerInput = document.getElementById("hacker-input");
 
@@ -265,7 +411,7 @@ if (isDashboard) {
     });
   }
 
-  // ── Delete chat ──────────────────────────────────────────
+  // ── Chat verwijderen ─────────────────────────────────────
   window.deleteChat = function () {
     if (!selectedChatId) return;
     var company = (companyData[selectedChatId] || {}).company || selectedChatId;
@@ -273,16 +419,15 @@ if (isDashboard) {
     socket.emit("delete-chat", { chatId: selectedChatId });
   };
 
-  // ── Copy last message ────────────────────────────────────
+  // ── Laatste bericht kopiëren ─────────────────────────────
   window.copyLastMessage = function () {
     if (!selectedChatId) return;
     var chat = (companyData[selectedChatId] || {}).chat || [];
     if (!chat.length) return;
-    var last = chat[chat.length - 1];
-    navigator.clipboard.writeText(last.chat).catch(function() {});
+    navigator.clipboard.writeText(chat[chat.length - 1].chat).catch(function () {});
   };
 
-  // ── Notification beep ────────────────────────────────────
+  // ── Notificatiebeep ──────────────────────────────────────
   function playBeep() {
     try {
       var ctx  = new AudioContext();
@@ -295,9 +440,9 @@ if (isDashboard) {
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.25);
-    } catch (e) { /* AudioContext unavailable */ }
+    } catch (e) { /* AudioContext niet beschikbaar */ }
   }
 
-  // Initial state
-  showEmptyState();
+  // Begin toestand
+  showEmptyChat();
 }

@@ -687,6 +687,195 @@ body {
 .hacker-send-btn:disabled { opacity: .3; cursor: not-allowed; }
 
 /* ================================================================
+   DASHBOARD TABS  (zijbalk)
+   ================================================================ */
+
+.sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sidebar-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 10px;
+  letter-spacing: 2px;
+  padding: 8px 0;
+  cursor: pointer;
+  transition: all .15s;
+}
+.sidebar-tab:hover  { color: var(--text-bright); }
+.sidebar-tab.active { color: var(--green); border-bottom-color: var(--green); }
+
+/* ================================================================
+   VIEW PANELS  (main area)
+   ================================================================ */
+
+.view-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ================================================================
+   TOKEN BEHEER – zijbalk
+   ================================================================ */
+
+.tokens-panel {
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.token-create-form {
+  padding: 12px 13px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.token-form-title {
+  color: var(--text-dim);
+  font-size: 9px;
+  letter-spacing: 2px;
+  margin-bottom: 2px;
+}
+.token-input-field {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-bright);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 6px 10px;
+  outline: none;
+  width: 100%;
+}
+.token-input-field:focus { border-color: var(--green); }
+.token-input-field::placeholder { color: var(--text-dim); font-size: 11px; }
+.token-create-btn {
+  background: var(--green-dim);
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-family: var(--font);
+  font-size: 11px;
+  padding: 7px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  transition: all .2s;
+  margin-top: 2px;
+}
+.token-create-btn:hover { background: var(--green); color: var(--bg); }
+.token-admin-error { color: var(--red); font-size: 10px; min-height: 14px; }
+
+.tokens-list {
+  flex: 1;
+  overflow-y: auto;
+}
+.tokens-list::-webkit-scrollbar { width: 3px; }
+.tokens-list::-webkit-scrollbar-thumb { background: var(--border2); }
+
+.token-list-item {
+  padding: 8px 13px;
+  border-bottom: 1px solid rgba(26,48,32,.4);
+  position: relative;
+  border-left: 2px solid transparent;
+}
+.token-list-item.token-active { border-left-color: var(--green); }
+.token-code  { font-size: 12px; color: var(--yellow); letter-spacing: 1px; font-weight: bold; }
+.token-meta  { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+.token-team  { font-size: 10px; color: var(--cyan); }
+.token-del-btn-sm {
+  position: absolute;
+  top: 50%; right: 10px;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px 5px;
+  line-height: 1;
+}
+.token-del-btn-sm:hover { color: var(--red); }
+
+/* ================================================================
+   TOKEN BEHEER – hoofdpaneel (tabel)
+   ================================================================ */
+
+.tokens-table-wrap {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+.tokens-table-wrap::-webkit-scrollbar { width: 4px; height: 4px; }
+.tokens-table-wrap::-webkit-scrollbar-thumb { background: var(--border2); }
+
+.tokens-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.tokens-table th {
+  text-align: left;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 2px;
+  font-weight: normal;
+  border-bottom: 1px solid var(--border2);
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+.tokens-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(26,48,32,.4);
+  vertical-align: middle;
+  color: var(--text-bright);
+}
+.tokens-table tr:hover td { background: rgba(0,255,65,.025); }
+.tokens-table .token-row-active td { border-left: 2px solid var(--green); }
+
+.td-token {
+  color: var(--yellow) !important;
+  font-weight: bold;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+.badge-active {
+  background: rgba(0,255,65,.12);
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-size: 9px;
+  padding: 2px 7px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+.badge-inactive {
+  background: rgba(100,100,100,.1);
+  border: 1px solid var(--text-dim);
+  color: var(--text-dim);
+  font-size: 9px;
+  padding: 2px 7px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+.token-del-btn {
+  background: transparent;
+  border: 1px solid var(--text-dim);
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.token-del-btn:hover { border-color: var(--red); color: var(--red); }
+
+/* ================================================================
    CONNECTING OVERLAY
    ================================================================ */
 
