@@ -1,27 +1,63 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" href="style.css" type="text/css">
-    <title>DarkNet Gamers - Hacker Chat</title>
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
-  </head>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DARKNET – Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="page-hacker">
 
-  <body>
-    <div class="container" style="margin-top: 15px;">
-        <div class="box" id="chatmessages">
-          <h1>DarkNet Gamers - Chat</h1>
-          <hr><div id="chats"></div><hr>
-          <ul id="messages"></ul>
-          <form id="form" action="">
-            <input id="input" autocomplete="off" /><button style="width: 100px;">Send</button><button onclick="deleteChat();" style="width: 100px; background-color: #F00;">Delete</button>
-          </form> 
-        </div>
+  <!-- Connecting overlay -->
+  <div id="connecting-overlay" class="connecting-overlay">
+    <div>AUTHENTICEREN</div>
+    <div style="font-size:11px;color:var(--text-dim);">Beveiligde verbinding opzetten...</div>
+  </div>
+
+  <!-- Sidebar: company list -->
+  <aside class="hacker-sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title">DARKNET OPERATORS</div>
+      <div id="sidebar-agent" class="sidebar-agent">Agent: —</div>
+      <div id="hacker-timer" class="sidebar-timer">--:--:--</div>
     </div>
-    <!--<div id="timeleft">Time left:</div>-->
-    <div id="chatbar"></div>
-    <script src="hacker-app.js" type="text/javascript"></script>
-  </body>
+    <div class="sidebar-stats">
+      <span>Actief: <span id="active-count">0</span></span>
+      <span>Ongelezen: <span id="unread-count">0</span></span>
+    </div>
+    <div id="companies-list" class="companies-list">
+      <div class="empty-state">Wachten op doelwitten...</div>
+    </div>
+  </aside>
+
+  <!-- Main: chat area -->
+  <main class="hacker-main">
+    <div class="hacker-chat-header">
+      <div>
+        <div id="hacker-chat-target" class="hacker-chat-target">Selecteer een doelwit</div>
+        <div id="hacker-chat-subtitle" class="hacker-chat-subtitle">Kies een organisatie uit de lijst</div>
+      </div>
+      <div class="hacker-controls">
+        <button class="ctrl-btn" onclick="copyLastMessage()">KOPIEER</button>
+        <button class="ctrl-btn danger" onclick="deleteChat()">VERWIJDER CHAT</button>
+      </div>
+    </div>
+
+    <div id="hacker-messages" class="hacker-messages">
+      <div class="empty-state">
+        <div>[ DARKNET OPERATORS ]</div>
+        <div style="font-size:10px;margin-top:8px;">Selecteer een organisatie om de onderhandeling te starten</div>
+      </div>
+    </div>
+
+    <form id="hacker-form" class="hacker-form" style="display:none">
+      <input type="text" id="hacker-input" class="hacker-input"
+             placeholder="Typ uw bericht als operator..." autocomplete="off">
+      <button type="submit" id="hacker-send-btn" class="hacker-send-btn" disabled>VERZENDEN</button>
+    </form>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="hacker-app.js"></script>
+</body>
 </html>

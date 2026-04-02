@@ -1,139 +1,160 @@
-/* 
- * Main Application
- * Maurice Snoeren
- */
+/* app.js – Company side (landing page + chat page) */
+"use strict";
 
-var version = "0.1 beta";
-
-/* Socket.IO and Events */
-const socket = io();
-socket.on('connect',              function ()    { onWebsocketConnection();            } );
-socket.on('connect_error',        function ()    { onWebsocketConnectionError();       } );
-socket.on('disconnect',           function ()    { onWebsocketDisconnection();         } );
-socket.on('chat-message-darknet', function(data) { onWebsocketMessageDarkNet(data);    } );
-socket.on('chat-message-company', function(data) { onWebsocketMessageCompany(data);    } );
-socket.on('timeleft',             function(data) { onWebsocketTimeLeft(data);          } );
-
-/* Workspace environment */
-var company       = "";
-var chatId        = "";
-var valid         = false;
-var timeleft      = 0;
-
-function logout () {
-  window.location.href = "index.html";
-} 
-
-/* Function is called when the user pressen ctr-s. Could get some saving functionality later. */
-function onCtrlSave() {
-  console.log("onCtrlSave: crt-s is pressed");
+function getParam(key) {
+  return new URLSearchParams(window.location.search).get(key) || "";
 }
 
-form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    if (input.value) {
-      socket.emit('chat-message-company', input.value);
-      input.value = '';
-    }
-});
+function escapeHtml(str) {
+  var d = document.createElement("div");
+  d.textContent = String(str);
+  return d.innerHTML;
+}
 
-/* 
- * Web Socket
- */
+// Detect which page we are on
+var isLandingPage = !!document.getElementById("token-input");
+var isChatPage    = !!document.getElementById("chat-messages");
 
-function onWebsocketConnection () {
-    company = getUrlVar("company");  
-    chatId  = getUrlVar("chatid");
+// ================================================================
+// LANDING PAGE  –  token validation
+// ================================================================
 
-    let pattern = /^[a-zA-Z0-9_\. ]{4}[a-zA-Z0-9_\. ]+$/;
-    if ( !pattern.test(chatId) || !pattern.test(company) ) {
-        alert("Something went wrong (#1)");
-        logout();
+if (isLandingPage) {
+  var socket      = io();
+  var connecting  = false;
+
+  window.connectToken = function () {
+    if (connecting) return;
+    var token    = document.getElementById("token-input").value.trim().toUpperCase();
+    var errorEl  = document.getElementById("token-error");
+    var btn      = document.getElementById("connect-btn");
+
+    if (!token) {
+      errorEl.textContent = "Voer uw toegangscode in.";
+      return;
     }
 
-    socket.emit('chat-login', {chatid: chatId, company: company});
+    errorEl.textContent  = "";
+    connecting           = true;
+    btn.disabled         = true;
+    btn.textContent      = "VERBINDEN...";
 
-    valid = true;
+    socket.emit("token-login", { token: token });
+  };
+
+  socket.on("token-valid", function () {
+    var token = document.getElementById("token-input").value.trim().toUpperCase();
+    window.location.href = "chat.html?token=" + encodeURIComponent(token);
+  });
+
+  socket.on("token-invalid", function (data) {
+    var errorEl             = document.getElementById("token-error");
+    var btn                 = document.getElementById("connect-btn");
+    errorEl.textContent     = "\u2717 Ongeldige code. Controleer uw toegangscode en probeer opnieuw.";
+    btn.disabled            = false;
+    btn.textContent         = "VERBINDING MAKEN \u2192";
+    connecting              = false;
+  });
 }
 
-function onWebsocketConnectionError () {
-    alert("Websocket connection error (#2)");
-    logout();
-}
+// ================================================================
+// CHAT PAGE  –  real-time chat
+// ================================================================
 
-// When the websocket has been disconnected, this function is called.
-function onWebsocketDisconnection () {
-    alert("Websocket disconnection (#3)");
-    logout();
-}
-
-function onWebsocketMessageDarkNet ( data ) {
-    $('#messages').append("<div style=\"padding: 10px;\"><b><i><small>(" + data.timestamp + ")</small><br/> DarkNet Gamers:</i></b> " + data.chat + "</div>");
-    document.documentElement.scrollTop = document.documentElement.scrollHeight;
-    console.log("onWebsocketMessageDarkNet");
-    console.log(data);
-}
-
-function onWebsocketMessageCompany ( data ) {
-    $('#messages').append("<div style=\"padding: 10px; text-align: right;\"><b><i><small>(" + data.timestamp + ")</small><br/> " + company + ":</i></b> " + data.chat + "</div>");
-    document.documentElement.scrollTop = document.documentElement.scrollHeight; 
-}
-
-function onWebsocketTimeLeft ( data ) {
-    timeleft = data
-    console.log("Got timeleft: " + JSON.stringify(timeleft));
-    setInterval(displayTimeLeft, 1000);
-}
-
-function displayTimeLeft() {
-    var delta = getTimeLeft(timeleft.timestamp);
-    //var timeLeftString = getTimeLeftString(timeleft.total - delta);
-    var timeLeftString = getTimeLeftString(delta);
-    $('#timeleft').html("Timeleft: "  + timeLeftString);
-}
-
-function getTimeStamp() {
-    const d = new Date();
-    return d.getUTCDate() + "-" + d.getUTCMonth() + "-" + d.getUTCFullYear() + " " + d.getUTCHours() + ":" + d.getUTCMinutes() + ":" + d.getUTCSeconds();
-}
-
-/* Helper Functions */
-
-function getUrlVar(key){
-    const queryString = window.location.search;
-    const urlParams = new URLSearchParams(queryString);
-    return urlParams.get(key);
-}
-
-function parseJson ( json ) {
-  try {
-    return JSON.parse(json);
-    
-  } catch(e) {
-    alert(json);
-    alert(e);
+if (isChatPage) {
+  var token = getParam("token");
+  if (!token) {
+    window.location.href = "index.html";
   }
 
-  return null;
-}
+  var socket        = io();
+  var timeleft      = null;
+  var timerInterval = null;
 
-function getTimeLeft (timestamp) {
-    var currentTimestamp = new Date();
-    return Math.abs(currentTimestamp.getTime()/1000 - timestamp);
-}
+  // Authenticate with token after socket connects
+  socket.on("connect", function () {
+    socket.emit("token-login", { token: token });
+  });
 
-function getTimeLeftString (delta) {
-    var days = Math.floor(delta / 86400);
-    console.log()
-    delta -= Math.round(days * 86400);
+  // Token accepted – show UI
+  socket.on("token-valid", function (data) {
+    var nameEl   = document.getElementById("company-name");
+    var statusEl = document.getElementById("company-status");
+    if (nameEl)   nameEl.textContent   = data.company;
+    if (statusEl) statusEl.textContent = "NETWERK GEËNCRYPTEERD \u2502 ONDERHANDELING ACTIEF";
 
-    var hours = Math.floor(delta / 3600) % 24;
-    delta -= Math.round(hours * 3600);
+    var overlay = document.getElementById("connecting-overlay");
+    if (overlay) overlay.style.display = "none";
+  });
 
-    var minutes = Math.round(Math.floor(delta / 60) % 60);
-    delta -= minutes * 60;
+  // Token rejected – go back to landing
+  socket.on("token-invalid", function () {
+    window.location.href = "index.html";
+  });
 
-    var seconds = Math.round(delta % 60);  // in theory the modulus is not required
+  // ── Timer ──────────────────────────────────────────────────
+  socket.on("timeleft", function (data) {
+    timeleft = data;
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(updateTimer, 1000);
+    updateTimer();
+  });
 
-    return days + "d " + hours + "h " + minutes + "m " + seconds + "s";
+  function updateTimer() {
+    if (!timeleft) return;
+    var remaining = Math.max(0, Math.floor(timeleft.deadline - Date.now() / 1000));
+    var d   = Math.floor(remaining / 86400);
+    var h   = Math.floor((remaining % 86400) / 3600);
+    var m   = Math.floor((remaining % 3600) / 60);
+    var s   = remaining % 60;
+    var pad = function(n) { return String(n).padStart(2, "0"); };
+    var el  = document.getElementById("timer-value");
+    if (el) {
+      el.textContent = d > 0
+        ? d + "d " + pad(h) + ":" + pad(m) + ":" + pad(s)
+        : pad(h) + ":" + pad(m) + ":" + pad(s);
+      el.style.color = remaining < 1800 ? "#ff0000" : remaining < 3600 ? "#ff6600" : "var(--red)";
+    }
+    if (remaining === 0 && timerInterval) clearInterval(timerInterval);
+  }
+
+  // ── Incoming messages ──────────────────────────────────────
+  socket.on("chat-message-darknet", function (msg) {
+    appendMessage("darknet", "DarkNet Operator", msg.timestamp, msg.chat);
+  });
+
+  socket.on("chat-message-company", function (msg) {
+    appendMessage("company", msg.company || "U", msg.timestamp, msg.chat);
+  });
+
+  function appendMessage(who, sender, timestamp, text) {
+    var container = document.getElementById("chat-messages");
+    if (!container) return;
+
+    var div = document.createElement("div");
+    div.className = "message " + who;
+    div.innerHTML =
+      '<div class="message-header">' +
+        '<span class="message-sender">' + escapeHtml(sender) + '</span>' +
+        '<span class="message-time">' + escapeHtml(timestamp) + '</span>' +
+      '</div>' +
+      '<div class="message-bubble">' + escapeHtml(text) + '</div>';
+
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  // ── Send message ───────────────────────────────────────────
+  var chatForm  = document.getElementById("chat-form");
+  var chatInput = document.getElementById("chat-input");
+
+  if (chatForm) {
+    chatForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var msg = chatInput.value.trim();
+      if (!msg) return;
+      socket.emit("chat-message-company", { msg: msg });
+      chatInput.value = "";
+    });
+  }
 }
