@@ -85,6 +85,7 @@ if (isDashboard) {
     socket.emit("admin-get-users");
     socket.emit("admin-get-api-keys");
     socket.emit("admin-get-auto-reply");
+    socket.emit("admin-get-agents");
 
     var overlay = document.getElementById("connecting-overlay");
     if (overlay) overlay.style.display = "none";
@@ -551,6 +552,22 @@ if (isDashboard) {
       osc.stop(ctx.currentTime + 0.25);
     } catch (e) { /* AudioContext niet beschikbaar */ }
   }
+
+  // ── AI agent status indicator ────────────────────────────
+  socket.on("admin-agents-changed", function (agents) {
+    var bar   = document.getElementById("ai-agent-bar");
+    var label = document.getElementById("ai-agent-label");
+    if (!bar || !label) return;
+
+    if (!agents || agents.length === 0) {
+      bar.className   = "ai-agent-bar ai-agent-offline";
+      label.textContent = "AI AGENT OFFLINE";
+    } else {
+      bar.className   = "ai-agent-bar ai-agent-online";
+      var names = agents.map(function (a) { return a.keyName; });
+      label.textContent = "AI AGENT ACTIEF \u2502 " + names.join(", ");
+    }
+  });
 
   // ── Admin feedback helper ────────────────────────────────
   function showAdminMsg(elId, isSuccess, text) {

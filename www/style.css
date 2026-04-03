@@ -551,6 +551,35 @@ body {
 .sidebar-agent  { color: var(--text-dim); font-size: 10px; margin-top: 2px; }
 .sidebar-timer  { color: var(--yellow); font-size: 13px; font-weight: bold; margin-top: 4px; }
 
+.ai-agent-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  letter-spacing: 1px;
+  transition: background .3s;
+}
+.ai-agent-bar.ai-agent-offline {
+  background: rgba(255,32,32,.08);
+  color: var(--text-dim);
+}
+.ai-agent-bar.ai-agent-online {
+  background: rgba(0,255,65,.08);
+  color: var(--green);
+}
+.ai-agent-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: currentColor;
+}
+.ai-agent-bar.ai-agent-online .ai-agent-dot {
+  animation: blink 1.4s infinite;
+}
+
 .sidebar-stats {
   display: flex;
   gap: 14px;

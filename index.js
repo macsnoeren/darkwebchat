@@ -134,6 +134,7 @@ let companieData   = {};
 let hackerSockets  = [];
 let hackerSessions = {};  // { sessionToken: username }
 let claims         = {};  // { chatId: { agentId, claimedAt } }  – in-memory, expires 5 min
+let activeAgents   = {};  // { agentId: { lastSeen, keyName } }
 
 const CLAIM_TTL_MS = 5 * 60 * 1000;
 
@@ -195,6 +196,14 @@ function generateApiKey() {
   const hex = "abcdef0123456789";
   const rand = Array.from({ length: 32 }, () => hex[Math.floor(Math.random() * hex.length)]).join("");
   return "dk_" + rand;
+}
+
+function buildAgentList() {
+  const TIMEOUT_MS = 90 * 1000; // 3× poll interval
+  const now = Date.now();
+  return Object.entries(activeAgents)
+    .filter(([, a]) => now - a.lastSeen < TIMEOUT_MS)
+    .map(([id, a]) => ({ id, keyName: a.keyName, lastSeen: a.lastSeen }));
 }
 
 function saveMessage(chatId, msg) {
@@ -330,7 +339,18 @@ app.post("/api", (req, res) => {
     return res.json({ ok: true, id: result.lastInsertRowid });
   }
 
-  if (action === "heartbeat" || action === "unregister_agent") {
+  if (action === "heartbeat") {
+    const keyName = (db.prepare("SELECT name FROM api_keys WHERE key_value = ?")
+      .get(req.headers["x-api-token"] || req.query.token || "") || {}).name || "onbekend";
+    const isNew = !activeAgents[agentId];
+    activeAgents[agentId] = { lastSeen: Date.now(), keyName };
+    if (isNew) broadcastToHackers("admin-agents-changed", buildAgentList());
+    return res.json({ ok: true });
+  }
+
+  if (action === "unregister_agent") {
+    delete activeAgents[agentId];
+    broadcastToHackers("admin-agents-changed", buildAgentList());
     return res.json({ ok: true });
   }
 
@@ -468,6 +488,7 @@ io.on("connection", (socket) => {
     socket._data.isHacker = true;
     socket._data.username = username;
     socket.emit("hacker-login-success", { username, companyData: companieData, timeleft: getTimerData() });
+    socket.emit("admin-agents-changed", buildAgentList());
     console.log(`[~] Operator sessie hersteld: ${username}`);
 
     // Stuur openstaande suggesties mee
@@ -655,6 +676,12 @@ io.on("connection", (socket) => {
     }
     db.prepare("DELETE FROM users WHERE username = ?").run(username);
     broadcastToHackers("admin-user-deleted", { username });
+  });
+
+  // ── ADMIN: get active AI agents ──────────────────────────
+  socket.on("admin-get-agents", () => {
+    if (!isHacker(socket)) return;
+    socket.emit("admin-agents-changed", buildAgentList());
   });
 
   // ── ADMIN: get API-keys ──────────────────────────────────

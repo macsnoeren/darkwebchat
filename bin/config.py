@@ -1,7 +1,7 @@
 # config.py
 
 # API-sleutel om bij DARKNET WEB CHAT de antwoorden te kunnen halen.
-API_KEY = "dk_2b2384d7fff68f99d6a683026f05bf7b"
+API_KEY = "dk_3c1a375a78428b110bb183acba329cb8"
 
 # URL van de webapplicatie API
 BASE_URL = "https://darkwebchat.zebrawavesecurity.info/api"
@@ -11,7 +11,7 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 
 # Lijst met LLM-modellen die gebruikt worden voor de beoordeling
 LLM_MODELS = [
-    "gemma:1b",
+    "gemma3:1b",
     "qwen3:4b",
     "gpt-oss:120b-cloud",
 ]
