@@ -19,23 +19,21 @@ var isChatPage    = !!document.getElementById("chat-messages");
 // ================================================================
 
 if (isLandingPage) {
-  var socket       = io();
-  var connecting   = false;
-  var tokenAccepted = false;   // true nadat server token heeft gevalideerd
+  var socket        = io();
+  var connecting    = false;
+  var tokenAccepted = false;
 
-  // Dynamische terminal output
   function terminalPrint(text, cssColor) {
     var el = document.getElementById("terminal-dynamic");
     if (!el) return;
     var line = document.createElement("div");
-    line.style.color = cssColor || "var(--green)";
-    line.style.fontSize = "12px";
+    line.style.color      = cssColor || "var(--green)";
+    line.style.fontSize   = "12px";
     line.style.lineHeight = "1.9";
-    line.textContent = text;
+    line.textContent      = text;
     el.appendChild(line);
   }
 
-  // Één submit-functie voor beide stappen
   window.submitStep = function () {
     if (connecting) return;
     var errorEl = document.getElementById("token-error");
@@ -49,7 +47,7 @@ if (isLandingPage) {
         return;
       }
       connecting = true;
-      document.getElementById("connect-btn").disabled = true;
+      document.getElementById("connect-btn").disabled    = true;
       document.getElementById("connect-btn").textContent = "VERBINDEN...";
       socket.emit("token-login", { token: token });
 
@@ -61,50 +59,50 @@ if (isLandingPage) {
         return;
       }
       connecting = true;
-      document.getElementById("connect-btn").disabled = true;
+      document.getElementById("connect-btn").disabled    = true;
       document.getElementById("connect-btn").textContent = "VERBINDEN...";
       var token2 = document.getElementById("token-input").value.trim().toUpperCase();
       socket.emit("token-login", { token: token2, teamName: teamName });
     }
   };
 
-  // Server: token geldig, sessie bestaat al → direct doorgaan
-  socket.on("token-valid", function () {
+  // Server: token geldig + teamnaam bekend → chatId ontvangen, doorsturen
+  socket.on("token-valid", function (data) {
     var token = document.getElementById("token-input").value.trim().toUpperCase();
     terminalPrint("> Toegang verleend. Verbinding beveiligd.", "var(--green)");
     setTimeout(function () {
-      window.location.href = "chat.html?token=" + encodeURIComponent(token);
+      window.location.href =
+        "chat.html?token=" + encodeURIComponent(token) +
+        "&chatId=" + encodeURIComponent(data.chatId);
     }, 600);
   });
 
-  // Server: token geldig, maar eerste keer → vraag teamnaam
+  // Server: token geldig, maar teamnaam nog niet ingevuld
   socket.on("token-needs-team", function (data) {
-    connecting     = false;
-    tokenAccepted  = true;
+    connecting    = false;
+    tokenAccepted = true;
 
-    // Toon stap 1 als ingevuld (readonly)
-    var tokenInput = document.getElementById("token-input");
-    tokenInput.readOnly = true;
+    var tokenInput    = document.getElementById("token-input");
+    tokenInput.readOnly    = true;
     tokenInput.style.color = "var(--green)";
 
     terminalPrint("> Toegangscode geaccepteerd. Organisatie: " + data.company, "var(--green)");
     terminalPrint("> Identificeer uw team om de verbinding te voltooien.", "var(--text-dim)");
 
-    // Toon stap 2
     document.getElementById("step-team").style.display = "flex";
     document.getElementById("team-input").focus();
 
-    document.getElementById("connect-btn").disabled  = false;
-    document.getElementById("connect-btn").textContent = "TEAM BEVESTIGEN →";
+    document.getElementById("connect-btn").disabled    = false;
+    document.getElementById("connect-btn").textContent = "TEAM BEVESTIGEN \u2192";
   });
 
   // Server: token ongeldig
   socket.on("token-invalid", function () {
     connecting = false;
-    var errorEl = document.getElementById("token-error");
-    errorEl.textContent = "✗ Ongeldige code. Controleer uw toegangscode en probeer opnieuw.";
-    document.getElementById("connect-btn").disabled  = false;
-    document.getElementById("connect-btn").textContent = "VERBINDING MAKEN →";
+    document.getElementById("token-error").textContent =
+      "\u2717 Ongeldige code. Controleer uw toegangscode en probeer opnieuw.";
+    document.getElementById("connect-btn").disabled    = false;
+    document.getElementById("connect-btn").textContent = "VERBINDING MAKEN \u2192";
   });
 }
 
@@ -113,8 +111,10 @@ if (isLandingPage) {
 // ================================================================
 
 if (isChatPage) {
-  var token = getParam("token");
-  if (!token) {
+  var token  = getParam("token");
+  var chatId = getParam("chatId");
+
+  if (!token || !chatId) {
     window.location.href = "index.html";
   }
 
@@ -122,12 +122,11 @@ if (isChatPage) {
   var timeleft      = null;
   var timerInterval = null;
 
-  // Na (her)verbinding meteen authenticeren – team naam is al in DB opgeslagen
+  // Herverbinding: stuur zowel token als chatId mee
   socket.on("connect", function () {
-    socket.emit("token-login", { token: token });
+    socket.emit("token-login", { token: token, chatId: chatId });
   });
 
-  // Toegang geaccepteerd
   socket.on("token-valid", function (data) {
     var nameEl   = document.getElementById("company-name");
     var statusEl = document.getElementById("company-status");
@@ -138,12 +137,10 @@ if (isChatPage) {
     if (overlay) overlay.style.display = "none";
   });
 
-  // Teamnaam nog vereist (mag niet voorkomen op chat-pagina, maar veiligheidsnetz)
   socket.on("token-needs-team", function () {
     window.location.href = "index.html?token=" + encodeURIComponent(token);
   });
 
-  // Token afgewezen
   socket.on("token-invalid", function () {
     window.location.href = "index.html";
   });
@@ -163,7 +160,7 @@ if (isChatPage) {
     var h   = Math.floor((remaining % 86400) / 3600);
     var m   = Math.floor((remaining % 3600) / 60);
     var s   = remaining % 60;
-    var pad = function(n) { return String(n).padStart(2, "0"); };
+    var pad = function (n) { return String(n).padStart(2, "0"); };
     var el  = document.getElementById("timer-value");
     if (el) {
       el.textContent = d > 0

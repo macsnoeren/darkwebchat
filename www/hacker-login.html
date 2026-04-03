@@ -34,6 +34,17 @@
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script>
+    // Check setup before loading the login form
+    (function () {
+      var s = io();
+      s.on("connect", function () { s.emit("check-setup"); });
+      s.on("setup-status", function (data) {
+        if (data.needsSetup) window.location.href = "setup.html";
+        else s.disconnect();
+      });
+    })();
+  </script>
   <script src="hacker-app.js"></script>
 </body>
 </html>

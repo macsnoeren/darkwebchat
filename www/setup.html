@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DARKNET – Eerste Installatie</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="page-hacker-login">
+
+  <div class="scanlines"></div>
+
+  <div class="hacker-login-box">
+    <div class="hacker-login-header">
+      <h1>EERSTE INSTALLATIE</h1>
+      <p>MAAK HET EERSTE OPERATOR-ACCOUNT AAN</p>
+    </div>
+
+    <div class="login-panel">
+      <div id="setup-notice" style="
+        border: 1px solid var(--yellow);
+        color: var(--yellow);
+        font-size: 11px;
+        padding: 10px 12px;
+        margin-bottom: 16px;
+        line-height: 1.7;
+      ">
+        ⚠ &nbsp;Er zijn nog geen operators aanwezig in de database.<br>
+        Maak hieronder het eerste beheerdersaccount aan.<br>
+        Deze pagina is daarna niet meer bereikbaar.
+      </div>
+
+      <form id="setup-form">
+        <div class="form-group">
+          <label class="form-label" for="setup-username">GEBRUIKERSNAAM</label>
+          <input type="text" id="setup-username" class="form-input"
+                 autocomplete="off" spellcheck="false" maxlength="20" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="setup-password">WACHTWOORD</label>
+          <input type="password" id="setup-password" class="form-input"
+                 autocomplete="new-password" minlength="6" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="setup-password2">WACHTWOORD BEVESTIGEN</label>
+          <input type="password" id="setup-password2" class="form-input"
+                 autocomplete="new-password" minlength="6" required>
+        </div>
+        <div id="setup-error" class="form-error"></div>
+        <button type="submit" class="login-btn">ACCOUNT AANMAKEN →</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    "use strict";
+    var socket = io();
+
+    // Als er al users zijn → terug naar login
+    socket.on("connect", function () {
+      socket.emit("check-setup");
+    });
+
+    socket.on("setup-status", function (data) {
+      if (!data.needsSetup) {
+        window.location.href = "hacker-login.html";
+      }
+    });
+
+    document.getElementById("setup-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      var username  = document.getElementById("setup-username").value.trim();
+      var password  = document.getElementById("setup-password").value;
+      var password2 = document.getElementById("setup-password2").value;
+      var errEl     = document.getElementById("setup-error");
+      errEl.textContent = "";
+
+      if (password !== password2) {
+        errEl.textContent = "\u2717 Wachtwoorden komen niet overeen.";
+        return;
+      }
+      socket.emit("operator-setup", { username: username, password: password });
+    });
+
+    socket.on("setup-done", function () {
+      window.location.href = "hacker-login.html";
+    });
+
+    socket.on("setup-error", function (data) {
+      document.getElementById("setup-error").textContent =
+        "\u2717 " + (data.message || "Er is een fout opgetreden.");
+    });
+  </script>
+</body>
+</html>

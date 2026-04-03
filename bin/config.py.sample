@@ -1,0 +1,22 @@
+# config.py
+
+# API-sleutel voor de webapplicatie
+API_KEY = "ee1444aefcc8711d5ef00465fc4b3bc1ea6b6e29f977a554cd4c45f7f1b7cc5e"
+
+# URL van de webapplicatie API
+BASE_URL = "https://test.jmnl.nl/api/index.php"
+
+# URL van de Ollama API
+OLLAMA_URL = "http://localhost:11434/api/generate"
+
+# Lijst met LLM-modellen die gebruikt worden voor de beoordeling
+LLM_MODELS = [
+    "qwen3:4b",
+    "qwen3:30b",
+    "gemma3:1b",
+    "gemma3:4b",
+    "gpt-oss:120b-cloud",
+]
+
+# Interval in seconden voor het ophalen van nieuwe antwoorden
+POLL_INTERVAL = 30

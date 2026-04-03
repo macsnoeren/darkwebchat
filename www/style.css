@@ -839,6 +839,9 @@ body {
 }
 .tokens-table tr:hover td { background: rgba(0,255,65,.025); }
 .tokens-table .token-row-active td { border-left: 2px solid var(--green); }
+.tokens-table .token-group-header td { background: rgba(0,255,65,.04); color: var(--text-bright); font-size: 12px; border-top: 1px solid var(--border2); }
+.tokens-table .token-team-row td { font-size: 12px; padding: 6px 12px; color: var(--text); }
+.tokens-table .token-team-row.token-row-active td { border-left: 2px solid var(--green); }
 
 .td-token {
   color: var(--yellow) !important;

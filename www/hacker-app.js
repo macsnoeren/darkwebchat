@@ -196,6 +196,7 @@ if (isDashboard) {
   }, 100);
 
   // Render tokentabel in het hoofdpaneel
+  // Elke token toont één of meer team-rijen eronder
   function renderTokensTable(tokens) {
     var tbody = document.getElementById("tokens-table-body");
     if (!tbody) return;
@@ -207,18 +208,39 @@ if (isDashboard) {
     }
 
     tokens.forEach(function (t) {
-      var tr = document.createElement("tr");
-      tr.className = t.active ? "token-row-active" : "";
-      tr.innerHTML =
-        '<td class="td-token">' + escapeHtml(t.token) + '</td>' +
-        '<td>' + escapeHtml(t.company) + '</td>' +
-        '<td>' + (t.teamName ? escapeHtml(t.teamName) : '<span style="color:var(--text-dim)">—</span>') + '</td>' +
-        '<td>' + (t.active
-          ? '<span class="badge-active">ACTIEF</span>'
+      // Token-header rij
+      var headerRow = document.createElement("tr");
+      headerRow.className = "token-group-header";
+      headerRow.innerHTML =
+        '<td class="td-token" colspan="3">' + escapeHtml(t.token) + ' &nbsp;<span style="color:var(--text-dim);font-size:10px;">' + escapeHtml(t.company) + '</span></td>' +
+        '<td>' + (t.activeCount > 0
+          ? '<span class="badge-active">' + t.activeCount + ' ACTIEF</span>'
           : '<span class="badge-inactive">WACHT</span>') + '</td>' +
-        '<td style="text-align:center">' + (t.active ? t.messageCount : '—') + '</td>' +
+        '<td style="text-align:center;color:var(--text-dim);font-size:11px;">' + t.teams.length + ' team(s)</td>' +
         '<td><button class="token-del-btn" onclick="deleteToken(\'' + escapeHtml(t.token) + '\')">\u2715</button></td>';
-      tbody.appendChild(tr);
+      tbody.appendChild(headerRow);
+
+      // Team-rijen onder dit token
+      if (t.teams.length === 0) {
+        var emptyRow = document.createElement("tr");
+        emptyRow.innerHTML =
+          '<td colspan="6" style="color:var(--text-dim);font-size:11px;padding:4px 12px 8px 24px;">Nog geen teams ingelogd</td>';
+        tbody.appendChild(emptyRow);
+      } else {
+        t.teams.forEach(function (team) {
+          var tr = document.createElement("tr");
+          tr.className = "token-team-row" + (team.active ? " token-row-active" : "");
+          tr.innerHTML =
+            '<td style="padding-left:24px;color:var(--text-dim);font-size:11px;">↳</td>' +
+            '<td colspan="2" style="font-size:12px;">' + escapeHtml(team.teamName || "—") + '</td>' +
+            '<td>' + (team.active
+              ? '<span class="badge-active">ACTIEF</span>'
+              : '<span class="badge-inactive">WACHT</span>') + '</td>' +
+            '<td style="text-align:center">' + team.messageCount + '</td>' +
+            '<td></td>';
+          tbody.appendChild(tr);
+        });
+      }
     });
   }
 
@@ -235,11 +257,18 @@ if (isDashboard) {
 
     tokens.forEach(function (t) {
       var item = document.createElement("div");
-      item.className = "token-list-item " + (t.active ? "token-active" : "");
+      item.className = "token-list-item " + (t.activeCount > 0 ? "token-active" : "");
+
+      var teamsHtml = "";
+      t.teams.forEach(function (team) {
+        teamsHtml += '<div class="token-team" style="' + (team.active ? "color:var(--green)" : "") + '">' +
+          escapeHtml(team.teamName || "—") + (team.active ? " ●" : "") + '</div>';
+      });
+
       item.innerHTML =
         '<div class="token-code">' + escapeHtml(t.token) + '</div>' +
         '<div class="token-meta">' + escapeHtml(t.company) + '</div>' +
-        (t.teamName ? '<div class="token-team">' + escapeHtml(t.teamName) + '</div>' : '') +
+        teamsHtml +
         '<button class="token-del-btn-sm" onclick="deleteToken(\'' + escapeHtml(t.token) + '\')">\u2715</button>';
       list.appendChild(item);
     });
