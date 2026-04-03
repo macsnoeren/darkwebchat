@@ -406,6 +406,9 @@ if (isDashboard) {
     updateSidebar();
     renderChat(chatId);
 
+    // Sync auto-reply toggle in de header
+    updateAutoReplyHeader(chatId);
+
     // Toon eventuele wachtende suggestie voor deze chat
     hideSuggestionPanel();
     activeSuggestion = null;
@@ -452,6 +455,7 @@ if (isDashboard) {
   }
 
   function showEmptyChat() {
+    updateAutoReplyHeader(null);
     var container  = document.getElementById("hacker-messages");
     var targetEl   = document.getElementById("hacker-chat-target");
     var subtitleEl = document.getElementById("hacker-chat-subtitle");
@@ -679,14 +683,18 @@ if (isDashboard) {
   });
 
   socket.on("admin-auto-reply-changed", function (data) {
+    // Houd companyData in sync zodat header-toggle altijd de juiste waarde toont
+    if (companyData[data.chatId]) companyData[data.chatId].auto_reply = data.enabled;
+
     // Update de toggle in de tabel zonder volledige herrender
     var toggle = document.querySelector(".auto-reply-toggle[data-chatid='" + data.chatId + "']");
     if (toggle) {
       toggle.checked = data.enabled;
       toggle.closest("tr").className = data.enabled ? "token-row-active" : "";
     }
-    // Toon ook indicatie in bedrijfslijst zijbalk
-    updateSidebar();
+
+    // Sync header-toggle als dit de geselecteerde chat is
+    if (data.chatId === selectedChatId) updateAutoReplyHeader(data.chatId);
   });
 
   // Nieuwe company verbonden → auto-reply tabel verversen
@@ -702,6 +710,32 @@ if (isDashboard) {
   window.toggleAutoReply = function (chatId, enabled) {
     socket.emit("admin-set-auto-reply", { chatId: chatId, enabled: enabled });
   };
+
+  // Toggle vanuit de chat-header (werkt op de geselecteerde chat)
+  window.toggleAutoReplyHeader = function (enabled) {
+    if (!selectedChatId) return;
+    socket.emit("admin-set-auto-reply", { chatId: selectedChatId, enabled: enabled });
+  };
+
+  // Sync de header-toggle met de werkelijke waarde van de geselecteerde chat
+  function updateAutoReplyHeader(chatId) {
+    var toggle  = document.getElementById("auto-reply-header-toggle");
+    var textEl  = document.getElementById("auto-reply-header-text");
+    var label   = document.getElementById("auto-reply-header-label");
+    if (!toggle) return;
+    if (!chatId) {
+      toggle.disabled = true;
+      toggle.checked  = false;
+      if (textEl) textEl.textContent = "AI AUTO";
+      if (label)  label.style.opacity = "0.4";
+      return;
+    }
+    var data = companyData[chatId] || {};
+    toggle.disabled = false;
+    toggle.checked  = !!data.auto_reply;
+    if (textEl) textEl.textContent = data.auto_reply ? "AI AUTO" : "AI AUTO";
+    if (label)  label.style.opacity = "1";
+  }
 
   function renderAutoReplyTable(list) {
     var tbody = document.getElementById("auto-reply-table-body");

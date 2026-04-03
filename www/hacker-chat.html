@@ -94,6 +94,11 @@
           <div id="hacker-chat-subtitle" class="hacker-chat-subtitle">Kies een organisatie uit de lijst</div>
         </div>
         <div class="hacker-controls">
+          <label id="auto-reply-header-label" class="auto-reply-label" title="AI antwoordt automatisch zonder tussenkomst">
+            <input type="checkbox" id="auto-reply-header-toggle" onchange="toggleAutoReplyHeader(this.checked)" disabled>
+            <span class="auto-reply-switch"></span>
+            <span class="auto-reply-text" id="auto-reply-header-text">AI AUTO</span>
+          </label>
           <button class="ctrl-btn" onclick="copyLastMessage()">KOPIEER</button>
           <button class="ctrl-btn danger" onclick="deleteChat()">VERWIJDER CHAT</button>
         </div>
