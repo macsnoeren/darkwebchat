@@ -41,6 +41,11 @@ db.exec(`
     chat      TEXT NOT NULL,
     company   TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS users (
+    username TEXT PRIMARY KEY,
+    password TEXT NOT NULL
+  );
 `);
 
 // Seed default tokens if the table is empty
@@ -67,6 +72,13 @@ if (tokenCount.n === 0) {
   ]);
 }
 
+// Seed default operator user if the table is empty
+const userCount = db.prepare("SELECT COUNT(*) AS n FROM users").get();
+if (userCount.n === 0) {
+  db.prepare("INSERT INTO users (username, password) VALUES (?, ?)").run("admin", "darknet001");
+  console.log("Default operator created: admin / darknet001");
+}
+
 // ============================================================
 // GAME CONFIGURATION
 // ============================================================
@@ -74,20 +86,13 @@ if (tokenCount.n === 0) {
 const gameDeadline        = new Date(Date.now() + 4 * 60 * 60 * 1000);
 const gameDurationSeconds = 4 * 60 * 60;
 
-// Police/hacker accounts – add or change as needed
-const hackerAccounts = {
-  "politie1": "agent001",
-  "politie2": "agent002",
-  "politie3": "agent003",
-  "darknet":  "darknet",
-};
-
 // ============================================================
 // RUNTIME STATE  (rebuilt from DB on startup)
 // ============================================================
 
-let companieData = {};   // { [chatId]: { company, teamName, chat: [] } }
-let hackerSockets = [];
+let companieData   = {};   // { [chatId]: { company, teamName, chat: [] } }
+let hackerSockets  = [];   // authenticated operator sockets
+let hackerSessions = {};   // { sessionToken: username }
 
 // Restore all sessions from DB so chat history survives server restarts
 (function loadFromDB() {
@@ -201,8 +206,6 @@ io.on("connection", (socket) => {
       const storedTeamName = session.teamName;
 
       if (!companieData[chatId]) {
-        // Session in DB but not in memory (e.g. server restart) – already loaded at startup
-        // Just in case:
         const msgs = db.prepare("SELECT * FROM messages WHERE chatId = ? ORDER BY id").all(chatId);
         companieData[chatId] = {
           company,
@@ -240,18 +243,37 @@ io.on("connection", (socket) => {
     broadcastToHackers("update-chat", { chatId, msg });
   });
 
-  // ── HACKER: login ────────────────────────────────────────
+  // ── HACKER: login (validates credentials, returns session token) ─
   socket.on("hacker-login", (data) => {
     const username = String(data.username || "").trim();
     const password = String(data.password || "").trim();
 
-    if (!hackerAccounts[username] || hackerAccounts[username] !== password) {
+    const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
+    if (!user || user.password !== password) {
       socket.emit("hacker-login-failed", { message: "Ongeldige inloggegevens." });
+      return;
+    }
+
+    const sessionToken = generateChatId();
+    hackerSessions[sessionToken] = username;
+
+    socket.emit("hacker-login-success", { sessionToken });
+    console.log(`[+] Hacker login: ${username}`);
+  });
+
+  // ── HACKER: session auth (dashboard reconnect via session token) ─
+  socket.on("hacker-session-auth", (data) => {
+    const sessionToken = String(data.sessionToken || "");
+    const username     = hackerSessions[sessionToken];
+
+    if (!username) {
+      socket.emit("hacker-login-failed", { message: "Sessie ongeldig of verlopen. Log opnieuw in." });
       return;
     }
 
     if (!isHacker(socket)) hackerSockets.push(socket);
     socket._data.isHacker = true;
+    socket._data.username = username;
 
     socket.emit("hacker-login-success", {
       username,
@@ -259,7 +281,7 @@ io.on("connection", (socket) => {
       timeleft:    getTimerData(),
     });
 
-    console.log(`[+] Hacker logged in: ${username}`);
+    console.log(`[+] Hacker session restored: ${username}`);
   });
 
   // ── HACKER: send message ─────────────────────────────────
@@ -292,7 +314,6 @@ io.on("connection", (socket) => {
     console.log(`[-] Chat deleted: ${companieData[chatId].company}`);
     delete companieData[chatId];
     broadcastToHackers("chat-deleted", { chatId });
-    // Note: session + messages stay in DB for audit trail
   });
 
   // ── ADMIN: get token list ────────────────────────────────
@@ -344,6 +365,67 @@ io.on("connection", (socket) => {
     broadcastToHackers("admin-token-deleted", { token, chatId: entry.chatId });
   });
 
+  // ── ADMIN: get users ─────────────────────────────────────
+  socket.on("admin-get-users", () => {
+    if (!isHacker(socket)) return;
+    const users = db.prepare("SELECT username FROM users ORDER BY username").all();
+    socket.emit("admin-users-data", users);
+  });
+
+  // ── ADMIN: create user ───────────────────────────────────
+  socket.on("admin-create-user", (data) => {
+    if (!isHacker(socket)) return;
+    const username = String(data.username || "").trim();
+    const password = String(data.password || "").trim();
+
+    if (!username || !password) return;
+    if (!/^[a-zA-Z0-9_-]{2,20}$/.test(username)) {
+      socket.emit("admin-error", { message: "Gebruikersnaam ongeldig (2-20 tekens, a-z 0-9 _ -)." });
+      return;
+    }
+    if (db.prepare("SELECT username FROM users WHERE username = ?").get(username)) {
+      socket.emit("admin-error", { message: "Gebruikersnaam bestaat al." });
+      return;
+    }
+
+    db.prepare("INSERT INTO users (username, password) VALUES (?, ?)").run(username, password);
+    console.log(`[+] User created: ${username}`);
+    broadcastToHackers("admin-user-created", { username });
+  });
+
+  // ── ADMIN: reset user password ───────────────────────────
+  socket.on("admin-create-user-reset", (data) => {
+    if (!isHacker(socket)) return;
+    const username = String(data.username || "").trim();
+    const password = String(data.password || "").trim();
+
+    if (!username || !password) return;
+    if (!db.prepare("SELECT username FROM users WHERE username = ?").get(username)) {
+      socket.emit("admin-error", { message: "Gebruiker niet gevonden." });
+      return;
+    }
+
+    db.prepare("UPDATE users SET password = ? WHERE username = ?").run(password, username);
+    console.log(`[~] Password reset: ${username}`);
+    socket.emit("admin-user-created", { username }); // reuse event to trigger refresh + success msg
+  });
+
+  // ── ADMIN: delete user ───────────────────────────────────
+  socket.on("admin-delete-user", (data) => {
+    if (!isHacker(socket)) return;
+    const username = String(data.username || "").trim();
+
+    const count = db.prepare("SELECT COUNT(*) AS n FROM users").get();
+    if (count.n <= 1) {
+      socket.emit("admin-error", { message: "Kan de laatste gebruiker niet verwijderen." });
+      return;
+    }
+
+    db.prepare("DELETE FROM users WHERE username = ?").run(username);
+    console.log(`[-] User deleted: ${username}`);
+    broadcastToHackers("admin-user-deleted", { username });
+  });
+
   // ── DISCONNECT ───────────────────────────────────────────
   socket.on("disconnect", () => {
     hackerSockets = hackerSockets.filter((s) => s.id !== socket.id);
@@ -358,5 +440,4 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`\nDarkWebChat server running on port ${PORT}`);
   console.log(`Game deadline : ${gameDeadline.toUTCString()}\n`);
-  console.log("Hacker accounts:", Object.keys(hackerAccounts).join(", "), "\n");
 });

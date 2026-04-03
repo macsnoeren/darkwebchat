@@ -29,11 +29,9 @@ if (isLoginPage) {
     socket.emit("hacker-login", { username: username, password: password });
   });
 
-  socket.on("hacker-login-success", function () {
-    var username = document.getElementById("hacker-username").value.trim();
-    var password = document.getElementById("hacker-password").value;
-    window.location.href = "hacker-chat.html?u=" +
-      encodeURIComponent(username) + "&p=" + encodeURIComponent(password);
+  socket.on("hacker-login-success", function (data) {
+    // Redirect with session token only – credentials never appear in the URL
+    window.location.href = "hacker-chat.html?s=" + encodeURIComponent(data.sessionToken);
   });
 
   socket.on("hacker-login-failed", function (data) {
@@ -48,10 +46,9 @@ if (isLoginPage) {
 
 if (isDashboard) {
   var socket       = io();
-  var username     = getParam("u");
-  var password     = getParam("p");
+  var sessionToken = getParam("s");
 
-  if (!username || !password) {
+  if (!sessionToken) {
     window.location.href = "hacker-login.html";
   }
 
@@ -62,9 +59,9 @@ if (isDashboard) {
   var timerInterval  = null;
   var activeTab      = "chats";
 
-  // ── Connect + authenticate ──────────────────────────────
+  // ── Connect + authenticate via session token ─────────────
   socket.on("connect", function () {
-    socket.emit("hacker-login", { username: username, password: password });
+    socket.emit("hacker-session-auth", { sessionToken: sessionToken });
   });
 
   socket.on("hacker-login-failed", function () {
@@ -80,11 +77,12 @@ if (isDashboard) {
     });
 
     var agentEl = document.getElementById("sidebar-agent");
-    if (agentEl) agentEl.textContent = "Agent: " + username;
+    if (agentEl) agentEl.textContent = "Agent: " + data.username;
 
     startTimer(timeleft);
     updateSidebar();
     socket.emit("admin-get-tokens");
+    socket.emit("admin-get-users");
 
     var overlay = document.getElementById("connecting-overlay");
     if (overlay) overlay.style.display = "none";
@@ -96,7 +94,6 @@ if (isDashboard) {
     unreadCounts[data.chatId] = 1;
     updateSidebar();
     playBeep();
-    // Vernieuw token-overzicht zodat status bijgewerkt wordt
     socket.emit("admin-get-tokens");
   });
 
@@ -143,11 +140,9 @@ if (isDashboard) {
 
   socket.on("admin-token-created", function () {
     socket.emit("admin-get-tokens");
-    var errEl = document.getElementById("token-admin-error");
-    if (errEl) { errEl.style.color = "var(--green)"; errEl.textContent = "\u2713 Token aangemaakt."; }
+    showAdminMsg("token-admin-error", true, "\u2713 Token aangemaakt.");
     document.getElementById("new-token").value   = "";
     document.getElementById("new-company").value = "";
-    setTimeout(function () { if (errEl) errEl.textContent = ""; }, 3000);
   });
 
   socket.on("admin-token-deleted", function () {
@@ -155,24 +150,23 @@ if (isDashboard) {
   });
 
   socket.on("admin-error", function (data) {
-    var errEl = document.getElementById("token-admin-error");
-    if (errEl) { errEl.style.color = "var(--red)"; errEl.textContent = "\u2717 " + data.message; }
+    // Show error in whichever panel is active
+    var id = activeTab === "users" ? "user-admin-error" : "token-admin-error";
+    showAdminMsg(id, false, "\u2717 " + data.message);
   });
 
   // Token aanmaken
   window.createToken = function () {
     var token   = (document.getElementById("new-token").value || "").trim().toUpperCase();
     var company = (document.getElementById("new-company").value || "").trim();
-    var errEl   = document.getElementById("token-admin-error");
-    if (errEl) errEl.textContent = "";
+    showAdminMsg("token-admin-error", false, "");
 
-    // Auto-formatteer: voeg koppelteken in
     token = token.replace(/[^A-Z0-9]/g, "");
     if (token.length > 4) token = token.slice(0, 4) + "-" + token.slice(4, 8);
     document.getElementById("new-token").value = token;
 
     if (!token || !company) {
-      if (errEl) { errEl.style.color = "var(--red)"; errEl.textContent = "Vul zowel token als bedrijfsnaam in."; }
+      showAdminMsg("token-admin-error", false, "Vul zowel token als bedrijfsnaam in.");
       return;
     }
     socket.emit("admin-create-token", { token: token, company: company });
@@ -252,6 +246,99 @@ if (isDashboard) {
   }
 
   // ================================================================
+  // ADMIN: GEBRUIKERS BEHEER
+  // ================================================================
+
+  socket.on("admin-users-data", function (users) {
+    renderUsersTable(users);
+    renderUsersSidebar(users);
+  });
+
+  socket.on("admin-user-created", function () {
+    socket.emit("admin-get-users");
+    showAdminMsg("user-admin-error", true, "\u2713 Operator aangemaakt.");
+    document.getElementById("new-username").value      = "";
+    document.getElementById("new-user-password").value = "";
+  });
+
+  socket.on("admin-user-deleted", function () {
+    socket.emit("admin-get-users");
+  });
+
+  // Gebruiker aanmaken
+  window.createUser = function () {
+    var username = (document.getElementById("new-username").value || "").trim();
+    var password = (document.getElementById("new-user-password").value || "").trim();
+    showAdminMsg("user-admin-error", false, "");
+
+    if (!username || !password) {
+      showAdminMsg("user-admin-error", false, "Vul gebruikersnaam en wachtwoord in.");
+      return;
+    }
+    socket.emit("admin-create-user", { username: username, password: password });
+  };
+
+  // Gebruiker verwijderen
+  window.deleteUser = function (username) {
+    if (!confirm("Operator '" + username + "' verwijderen?")) return;
+    socket.emit("admin-delete-user", { username: username });
+  };
+
+  // Vernieuwen
+  window.refreshUsers = function () {
+    socket.emit("admin-get-users");
+  };
+
+  // Render gebruikerstabel in het hoofdpaneel
+  function renderUsersTable(users) {
+    var tbody = document.getElementById("users-table-body");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    if (!users || users.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-dim);text-align:center;padding:20px;">Geen gebruikers gevonden</td></tr>';
+      return;
+    }
+
+    users.forEach(function (u) {
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td class="td-token">' + escapeHtml(u.username) + '</td>' +
+        '<td><button class="ctrl-btn" onclick="promptResetPassword(\'' + escapeHtml(u.username) + '\')">RESET</button></td>' +
+        '<td><button class="token-del-btn" onclick="deleteUser(\'' + escapeHtml(u.username) + '\')">\u2715</button></td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  // Render compacte gebruikerslijst in de zijbalk
+  function renderUsersSidebar(users) {
+    var list = document.getElementById("users-list");
+    if (!list) return;
+    list.innerHTML = "";
+
+    if (!users || users.length === 0) {
+      list.innerHTML = '<div style="padding:12px;color:var(--text-dim);font-size:11px;">Geen operators</div>';
+      return;
+    }
+
+    users.forEach(function (u) {
+      var item = document.createElement("div");
+      item.className = "token-list-item";
+      item.innerHTML =
+        '<div class="token-code" style="color:var(--cyan)">' + escapeHtml(u.username) + '</div>' +
+        '<button class="token-del-btn-sm" onclick="deleteUser(\'' + escapeHtml(u.username) + '\')">\u2715</button>';
+      list.appendChild(item);
+    });
+  }
+
+  // Wachtwoord resetten via prompt
+  window.promptResetPassword = function (username) {
+    var newPass = prompt("Nieuw wachtwoord voor '" + username + "':");
+    if (!newPass || !newPass.trim()) return;
+    socket.emit("admin-create-user-reset", { username: username, password: newPass.trim() });
+  };
+
+  // ================================================================
   // TAB SWITCHING
   // ================================================================
 
@@ -260,15 +347,19 @@ if (isDashboard) {
 
     document.getElementById("tab-chats").classList.toggle("active",  tab === "chats");
     document.getElementById("tab-tokens").classList.toggle("active", tab === "tokens");
+    document.getElementById("tab-users").classList.toggle("active",  tab === "users");
 
-    document.getElementById("sidebar-stats").style.display = tab === "chats"  ? "flex"  : "none";
-    document.getElementById("companies-list").style.display= tab === "chats"  ? "block" : "none";
-    document.getElementById("tokens-panel").style.display  = tab === "tokens" ? "flex"  : "none";
+    document.getElementById("sidebar-stats").style.display  = tab === "chats"  ? "flex"  : "none";
+    document.getElementById("companies-list").style.display = tab === "chats"  ? "block" : "none";
+    document.getElementById("tokens-panel").style.display   = tab === "tokens" ? "flex"  : "none";
+    document.getElementById("users-panel").style.display    = tab === "users"  ? "flex"  : "none";
 
-    document.getElementById("view-chat").style.display     = tab === "chats"  ? "flex"  : "none";
-    document.getElementById("view-tokens").style.display   = tab === "tokens" ? "flex"  : "none";
+    document.getElementById("view-chat").style.display      = tab === "chats"  ? "flex"  : "none";
+    document.getElementById("view-tokens").style.display    = tab === "tokens" ? "flex"  : "none";
+    document.getElementById("view-users").style.display     = tab === "users"  ? "flex"  : "none";
 
     if (tab === "tokens") socket.emit("admin-get-tokens");
+    if (tab === "users")  socket.emit("admin-get-users");
   };
 
   // ================================================================
@@ -441,6 +532,15 @@ if (isDashboard) {
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.25);
     } catch (e) { /* AudioContext niet beschikbaar */ }
+  }
+
+  // ── Admin feedback helper ────────────────────────────────
+  function showAdminMsg(elId, isSuccess, text) {
+    var el = document.getElementById(elId);
+    if (!el) return;
+    el.style.color = isSuccess ? "var(--green)" : "var(--red)";
+    el.textContent = text;
+    if (text) setTimeout(function () { el.textContent = ""; }, 3000);
   }
 
   // Begin toestand
