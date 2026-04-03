@@ -214,18 +214,6 @@ function formatChatHistory(chatId) {
 // REST API  –  /api
 // ============================================================
 
-const API_INSTRUCTION =
-  "Jij bent een DarkNet ransomware negotiation operator. " +
-  "Jouw doel is om de organisatie te bewegen tot betaling van het losgeld. " +
-  "Analyseer de chatgeschiedenis en stel het volgende bericht voor dat jij als operator zou sturen. " +
-  "Wees professioneel maar dreigend. Onthul nooit je ware identiteit of locatie.";
-
-const API_CRITERIA =
-  "Het voorgestelde bericht moet: (1) druk uitoefenen op de deadline, " +
-  "(2) de organisatie dichter bij betaling brengen, " +
-  "(3) professioneel en geloofwaardig klinken als ransomware operator, " +
-  "(4) kort en krachtig zijn (maximaal 3 zinnen).";
-
 app.get("/api", (req, res) => {
   if (!validateApiKey(req)) {
     return res.status(401).json({ error: "Authenticatie mislukt. Controleer je API_KEY." });
@@ -234,17 +222,18 @@ app.get("/api", (req, res) => {
   const action = req.query.action || "";
 
   if (action === "get_pending") {
-    // Return all active chats that are not currently claimed
+    // Alleen chats met minstens één bedrijfsbericht retourneren
+    // en die niet actief geclaimd zijn door een andere agent
     const tasks = Object.entries(companieData)
-      .filter(([chatId]) => {
+      .filter(([chatId, data]) => {
         const claim = claims[chatId];
-        return !claim || claimExpired(claim);
+        const hasCompanyMsg = data.chat.some((m) => m.who === "company");
+        return hasCompanyMsg && (!claim || claimExpired(claim));
       })
       .map(([chatId, data]) => ({
         team_id:      chatId,
-        team_name:    `${data.company}${data.teamName ? " | Team: " + data.teamName : ""}`,
-        instruction:  API_INSTRUCTION,
-        criteria:     API_CRITERIA,
+        team_name:    data.teamName || data.company,
+        company:      data.company,
         chat_history: formatChatHistory(chatId),
       }));
 

@@ -12,10 +12,8 @@ import re
 import logging
 import uuid
 from typing import List, Dict, Optional, Any
-import re
 from config import API_KEY, BASE_URL, OLLAMA_URL, LLM_MODELS, POLL_INTERVAL
 
-# Configureer logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -23,184 +21,193 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class AIFeedbackService:
+# ============================================================
+# PERSONA & ACHTERGROND
+# ============================================================
+
+DARKNET_PERSONA = """
+Je bent een lid van DarkNet Gamers, een professionele ransomware-groep.
+Je hebt het netwerk van een organisatie volledig versleuteld en hun data gestolen.
+Je onderhandelt namens de groep over de betaling van het losgeld.
+
+LOSGELDBRIEF DIE DE ORGANISATIE HEEFT ONTVANGEN:
+---
+!!! GAME OVER !!!
+
+The DarkNet Gamers have encrypted your files with the strongest encryption and a unique key.
+The only way to get your files back is to pay the ransom. Your files have also been copied.
+If the ransom is not paid, the files will be made public.
+
+The ransom for you is set at 4 BTC.
+
+For further instructions, please contact us on http://rl7f2cxf4xtz5za2l25gexqabe5fdvr66ahpsumoc33nkpnj7zvfrsyd.onion
+---
+
+JOUW GEDRAGSREGELS:
+1. Je bent een harde onderhandelaar. Je gaat NIET snel met de prijs omlaag.
+2. Je staat open voor creatieve betalingsregelingen (gespreide betaling, gedeeltelijke decryptie), maar nooit korting geven zonder tegenprestatie.
+3. Grappen of niet-serieuze berichten worden HARD afgestraft: dreig dat je meer bestanden vernietigt of eerder publiceert.
+4. Je communiceert in de taal van het bedrijf. Als zij Nederlands schrijven, antwoord je in het Nederlands.
+5. Je onthult NOOIT je echte identiteit, locatie of technische details over de aanval.
+6. Verwijs bij betalingsvragen altijd naar het Bitcoin-adres dat nog volgt na bevestiging.
+7. Houd de druk op de deadline – hoe langer ze wachten, hoe meer de prijs stijgt.
+8. Maximaal 3 zinnen per bericht. Geen lange uitleg. Koud en zakelijk.
+"""
+
+
+class DarkNetNegotiator:
     def __init__(self):
-        self.api_key = API_KEY
-        self.base_url = BASE_URL
-        self.ollama_url = OLLAMA_URL
-        self.models = LLM_MODELS
+        self.api_key       = API_KEY
+        self.base_url      = BASE_URL
+        self.ollama_url    = OLLAMA_URL
+        self.models        = LLM_MODELS
         self.poll_interval = POLL_INTERVAL
-        self.agent_id = f"agent-{uuid.uuid4().hex[:8]}"
+        self.agent_id      = f"darknet-agent-{uuid.uuid4().hex[:8]}"
 
     def _get_headers(self) -> Dict[str, str]:
         return {
             "X-API-Token": self.api_key,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
     def _extract_json(self, text: Any) -> Optional[Dict]:
-        if isinstance(text, dict): return text
-        if not isinstance(text, str): return None
-        
+        if isinstance(text, dict):
+            return text
+        if not isinstance(text, str):
+            return None
         cleaned = re.sub(r'```(?:json|text)?\n?|```', '', text)
         match = re.search(r'\{.*\}', cleaned, re.DOTALL)
-        if not match: return None
-
+        if not match:
+            return None
         try:
             return json.loads(match.group())
         except json.JSONDecodeError:
-            logger.debug(f"JSONDecodeError voor tekst: {text}")
+            logger.debug(f"JSONDecodeError: {text[:120]}")
             return None
 
     def fetch_pending_tasks(self) -> List[Dict]:
+        """Haal alle actieve chats op die een bedrijfsbericht bevatten en niet geclaimd zijn."""
         try:
             response = requests.get(
                 self.base_url,
                 headers=self._get_headers(),
-                params={"action": "get_pending", "token": self.api_key}, # Fallback token in URL
-                timeout=30
+                params={"action": "get_pending", "token": self.api_key},
+                timeout=30,
             )
-            
             if response.status_code == 401:
-                logger.error("Authenticatie mislukt. Controleer je API_KEY.")
+                logger.error("Authenticatie mislukt. Controleer API_KEY in config.py.")
                 return []
-            
             response.raise_for_status()
-            return response.json()
+            tasks = response.json()
+            logger.info(f"{len(tasks)} taak/taken opgehaald.")
+            return tasks
         except Exception as e:
             logger.error(f"Fout bij ophalen taken: {e}")
             return []
 
-    def get_model_feedback(self, task: Dict, model: str) -> Optional[Dict]:
-        instruction = str(task.get('instruction') or "")
-        criteria = str(task.get('criteria') or "")
-        answer = str(task.get('chat_history') or "")
-
-        # DOCUMENTATIE VAN DE PROMPT-OPBOUW:
-        # 1. # CONTEXT: Gebruikt 'Persona Prompting'. Door de AI een expertrol te geven, 
-        #    wordt de woordkeuze en diepgang van de analyse professioneler.
-        #
-        # 2. # INPUT DATA: Scheidt instructies strikt van de data van de gebruiker. 
-        #    Dit voorkomt 'prompt injection' waarbij de team-tekst de AI probeert te foppen.
-        #
-        # 3. # JOUW EVALUATIEPROCES: Implementeert 'Chain-of-Thought'. 
-        #    - Stap 1 (Essentie bepalen): Wat is de absolute kern die beantwoord moet worden?
-        #    - Stap 2 (Semantische match): Zoek naar de intentie. Synoniemen of alternatieve
-        #      verwoordingen die op hetzelfde neerkomen moeten positief gewaardeerd worden.
-        #    - Stap 3 (Dekkingsanalyse): Identificeer de verschillende aspecten in de criteria 
-        #      en controleer of de meerderheid hiervan aanwezig is.
-        #
-        # 4. # HINT-METHODIEK: Voorkomt dat de AI het antwoord 'spoilt'. De AI wordt 
-        #    geïnstrueerd om hints te geven in plaats van oplossingen.
-        #
-        # 5. # OUTPUT SPECIFICATIES: Stelt harde grenzen aan de lengte (max 3 zinnen) 
-        #    en de toon ('jullie'-vorm).
-        #
-        # 6. # VERPLICHTE JSON STRUCTUUR: Cruciaal voor machine-to-machine communicatie. 
-        #    De AI wordt gedwongen om geen 'gelets' eromheen te typen, zodat Python de data kan parsen.
+    def generate_reply(self, task: Dict, model: str) -> Optional[str]:
+        """
+        Genereer een DarkNet Gamers onderhandelingsbericht op basis van de chatgeschiedenis.
+        Retourneert alleen de tekst van het bericht (geen score of JSON wrapper).
+        """
+        company      = str(task.get('company')      or task.get('team_name', 'het bedrijf'))
+        chat_history = str(task.get('chat_history') or "")
 
         prompt = f"""
-        # CONTEXT
-        Je bent een deskundige beoordelaar en recherche-instructeur voor een educatief spel. 
-        Je taak is om het ingezonden werk van een team te analyseren en van feedback te voorzien.
+{DARKNET_PERSONA}
 
-        # INPUT DATA
-        - **Opdracht voor het team**: {instruction}
-        - **Beoordelingscriteria**: {criteria}
-        - **Chatgeschiedenis (Team & Docent)**: {answer}
+# HUIDIGE SITUATIE
+- Organisatie: {company}
+- Teamcode gebruikt door dit bedrijf in de chat: {task.get('team_name', '—')}
 
-        # JOUW EVALUATIEPROCES (Denk stap-voor-stap)
-        1. **Kern van de criteria**: Bepaal wat de intentie is van de criteria. Welke informatie of welk inzicht is essentieel?
-        2. **Dekkingsanalyse**: Breek de criteria op in afzonderlijke aspecten of feiten. Controleer hoeveel van deze aspecten (minimaal 60-70%) in het antwoord van het team worden geraakt.
-        3. **Semantische analyse**: Wees flexibel met de verwoording. Als een aspect niet letterlijk wordt genoemd, maar de strekking of de logische conclusie wel aanwezig is, telt dit als een match.
-        4. **Scoretoewijzing**: 
-           - Geef een 7 of hoger alleen als de meeste aspecten (de hoofdzaken) van de criteria behandeld zijn.
-           - Een 10 is voor een antwoord dat alle aspecten en de volledige context dekt.
+# CHATGESCHIEDENIS (meest recente onderaan)
+{chat_history}
 
-        # RICHTLIJNEN VOOR FEEDBACK (BELANGRIJK)
-        - Geef NOOIT direct het juiste antwoord of de ontbrekende feiten letterlijk prijs aan het team.
-        - Als het antwoord onvolledig is, geef dan een hint: wijs op een specifieke locatie, een persoon of een inconsistentie in hun verhaal.
-        - Gebruik prikkelende vragen (bijv: "Hebben jullie de camerabeelden van de hal wel goed bekeken?") in plaats van feitelijke correcties.
+# JOUW TAAK
+Analyseer de chatgeschiedenis en schrijf ALLEEN het volgende bericht dat jij als DarkNet Gamers onderhandelaar zou sturen.
+Reageer direct op het laatste bericht van het bedrijf.
 
-        # OUTPUT SPECIFICATIES
-        Geef je antwoord uitsluitend in JSON-formaat met de volgende velden:
-        - "score": Een numerieke waarde tussen 0 en 10.
-        - "feedback": Een sturende reactie met hints gericht aan het team in de 'jullie'-vorm. Verklap niets, maar wijs de weg (max 3 zinnen).
+STRIKTE REGELS:
+- Maximaal 3 zinnen.
+- Geen aanhef of ondertekening.
+- Geen uitleg buiten het bericht.
+- Schrijf in dezelfde taal als het bedrijf (meestal Nederlands).
+- Geef uitsluitend een JSON terug in het formaat hieronder.
 
-        # VERPLICHTE JSON STRUCTUUR
-        Geef uitsluitend een JSON object terug zoals dit voorbeeld:
-        {{
-            "score": 7,
-            "feedback": "Goede start, maar kijk nog eens naar de tijdlijn.",
-        }}
+# VERPLICHT JSON-FORMAAT
+{{
+    "message": "<jouw onderhandelingsbericht hier>"
+}}
 
-        Begin nu met je analyse en output GEEN tekst voor of na de JSON.
-        """
-        
+Geef ALLEEN dit JSON object terug. Geen tekst ervoor of erna.
+"""
+
         try:
             start = time.time()
             resp = requests.post(
                 self.ollama_url,
                 json={"model": model, "prompt": prompt, "stream": False},
-                timeout=300
+                timeout=300,
             )
             resp.raise_for_status()
             duration = time.time() - start
-            
-            raw_response = resp.json().get("response", "")
-            result = self._extract_json(raw_response)
-            
-            if result:
-                result['duration'] = duration
-                return result
-            logger.warning(f"Model {model} gaf geen valide JSON. Raw response: {raw_response[:100]}...")
+
+            raw = resp.json().get("response", "")
+            result = self._extract_json(raw)
+
+            if result and "message" in result:
+                msg = str(result["message"]).strip()
+                logger.info(f"[{model}] Reply gegenereerd in {duration:.1f}s: {msg[:80]}…")
+                return msg
+
+            logger.warning(f"[{model}] Geen valide JSON ontvangen. Raw: {raw[:120]}…")
         except Exception as e:
-            logger.warning(f"Model {model} fout: {e}")
+            logger.warning(f"[{model}] Fout: {e}")
+
         return None
 
-    def claim_task(self, team_id: int) -> bool:
+    def claim_task(self, chat_id: str) -> bool:
         try:
             resp = requests.post(
                 f"{self.base_url}?action=claim_task&token={self.api_key}",
                 headers=self._get_headers(),
-                json={"team_id": team_id, "agent_id": self.agent_id},
-                timeout=15
+                json={"team_id": chat_id, "agent_id": self.agent_id},
+                timeout=15,
             )
             return resp.status_code == 200
         except Exception as e:
-            logger.error(f"Fout bij claimen taak {team_id}: {e}")
+            logger.error(f"Fout bij claimen {chat_id}: {e}")
             return False
 
-    def submit_suggestion(self, team_id: int, message: str, level_up: bool):
+    def submit_suggestion(self, chat_id: str, message: str) -> bool:
         try:
             payload = {
-                "team_id": team_id,
-                "message": message,
-                "level_up": level_up
+                "team_id":  chat_id,
+                "message":  message,
+                "level_up": False,
             }
             resp = requests.post(
                 f"{self.base_url}?action=send_suggestion&token={self.api_key}",
                 headers=self._get_headers(),
                 json=payload,
-                timeout=30
+                timeout=30,
             )
             resp.raise_for_status()
             return True
         except Exception as e:
-            logger.error(f"Fout bij versturen suggestie voor team {team_id}: {e}")
+            logger.error(f"Fout bij versturen suggestie voor {chat_id}: {e}")
             return False
-            
+
     def send_heartbeat(self):
         try:
-            resp = requests.post(
+            requests.post(
                 f"{self.base_url}?action=heartbeat&token={self.api_key}",
                 headers=self._get_headers(),
                 json={"agent_id": self.agent_id},
-                timeout=10
+                timeout=10,
             )
-            resp.raise_for_status()
         except Exception as e:
-            logger.warning(f"Fout bij versturen heartbeat: {e}")
+            logger.warning(f"Heartbeat mislukt: {e}")
 
     def unregister_agent(self):
         try:
@@ -208,63 +215,64 @@ class AIFeedbackService:
                 f"{self.base_url}?action=unregister_agent&token={self.api_key}",
                 headers=self._get_headers(),
                 json={"agent_id": self.agent_id},
-                timeout=5
+                timeout=5,
             )
-            logger.info("Agent succesvol afgemeld.")
-        except:
+            logger.info("Agent afgemeld.")
+        except Exception:
             pass
 
     def run(self):
-        logger.info(f"AI Feedback Service gestart (ID: {self.agent_id}). Interval: {self.poll_interval}s")
-        
+        logger.info(f"DarkNet Negotiator gestart (ID: {self.agent_id}) | Interval: {self.poll_interval}s")
+        logger.info(f"Verbonden met: {self.base_url}")
+        logger.info(f"Modellen: {', '.join(self.models)}")
+
         while True:
-            # Stuur direct een heartbeat bij de start van elke cyclus
             self.send_heartbeat()
 
             tasks = self.fetch_pending_tasks()
-            if tasks:
-                logger.info(f"{len(tasks)} antwoorden gevonden om te verwerken.")
-            
-            for task in tasks:
-                team_name = task.get('team_name', 'Onbekend')
-                team_id = task['team_id']
 
-                # Probeer de taak te claimen voordat we beginnen
-                if not self.claim_task(team_id):
-                    logger.info(f"Overslaan: Team '{team_name}' wordt al verwerkt door een andere agent.")
+            for task in tasks:
+                chat_id   = task.get('team_id', '')
+                team_name = task.get('team_name', 'Onbekend')
+                company   = task.get('company',   team_name)
+
+                if not chat_id:
+                    logger.warning("Taak zonder team_id overgeslagen.")
                     continue
 
-                # Stuur een extra heartbeat vlak voordat we aan de zware LLM analyse beginnen
+                if not self.claim_task(chat_id):
+                    logger.info(f"Overgeslagen: {company} / {team_name} – al geclaimd.")
+                    continue
+
+                logger.info(f"Verwerken: {company} / Team: {team_name}")
                 self.send_heartbeat()
 
+                # Probeer modellen in volgorde; gebruik de eerste die een resultaat geeft
                 for model in self.models:
-                    logger.info(f"Analyseren: Team '{team_name}' met {model}...")
-                    res = self.get_model_feedback(task, model)
-                    
-                    if res:
-                        score = res.get('score', 0)
-                        # Formatteer de feedback voor een individueel model
-                        duration = res.get('duration', 0)
-                        model_feedback = f"🤖 **AI Advies ({model})** - Score: {score}/10 (Tijdsduur: {duration:.2f}s)\n\n"
-                        model_feedback += f"{res['feedback']}"
-                        
-                        can_level_up = score >= 7.0
-                        
-                        # Stuur de suggestie direct per model door naar de API
-                        if self.submit_suggestion(task['team_id'], model_feedback, can_level_up):
-                            logger.info(f"Suggestie van {model} verstuurd voor {team_name}")
+                    logger.info(f"  Model: {model} …")
+                    reply = self.generate_reply(task, model)
+
+                    if reply:
+                        if self.submit_suggestion(chat_id, reply):
+                            logger.info(f"  Suggestie verstuurd via {model}.")
+                        else:
+                            logger.warning(f"  Versturen mislukt voor {model}.")
+                        break  # Eén suggestie per chat per ronde is genoeg
                     else:
-                        logger.warning(f"Model {model} gaf geen resultaat.")
+                        logger.warning(f"  {model} gaf geen resultaat, volgende proberen…")
+                else:
+                    logger.error(f"Alle modellen faalden voor {company} / {team_name}.")
 
             time.sleep(self.poll_interval)
 
+
 if __name__ == "__main__":
+    service = DarkNetNegotiator()
     try:
-        service = AIFeedbackService()
         service.run()
     except KeyboardInterrupt:
         logger.info("Service gestopt door gebruiker.")
         service.unregister_agent()
     except Exception as e:
-        logger.critical(f"Kritieke fout in service: {e}")
+        logger.critical(f"Kritieke fout: {e}", exc_info=True)
         service.unregister_agent()
