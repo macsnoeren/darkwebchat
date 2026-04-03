@@ -601,7 +601,9 @@ if (isDashboard) {
     if (!panel) return;
 
     if (agentEl) agentEl.textContent = s.agentId + " \u2502 " + s.timestamp;
-    if (textEl)  textEl.textContent  = s.message;
+    // Strip oude model-header regel zodat preview overeenkomt met wat er verstuurd wordt
+    var displayMsg = s.message.replace(/^[\s\S]*?🤖[^\n]*\n+/, "").trim() || s.message.trim();
+    if (textEl)  textEl.textContent  = displayMsg;
     panel.style.display = "flex";
   }
 

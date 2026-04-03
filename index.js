@@ -499,7 +499,13 @@ io.on("connection", (socket) => {
     const suggestion = db.prepare("SELECT * FROM ai_suggestions WHERE id = ? AND status = 'pending'").get(id);
     if (!suggestion) return;
 
-    const text = escape(suggestion.message);
+    // Strip old-format model-header lines (bijv. "🤖 **AI Advies (model)** - Score: ...")
+    // zodat alleen het eigenlijke bericht wordt overgenomen.
+    const cleanMessage = suggestion.message
+      .replace(/^[\s\S]*?🤖[^\n]*\n+/, "")  // verwijder alles t/m de 🤖-regel
+      .trim();
+
+    const text = escape(cleanMessage || suggestion.message.trim());
     const msg  = { timestamp: getTimeStamp(), who: "darknet", chat: text, company: companieData[chatId].company };
     saveMessage(chatId, msg);
     companieData[chatId].chat.push(msg);

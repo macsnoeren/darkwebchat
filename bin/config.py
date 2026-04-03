@@ -1,7 +1,7 @@
 # config.py
 
 # API-sleutel om bij DARKNET WEB CHAT de antwoorden te kunnen halen.
-API_KEY = "dk_7fb2cf404b7baea461d6723f84404d73"
+API_KEY = "dk_8b0d36f4faf467e3e21222234936ed68"
 
 # URL van de webapplicatie API
 BASE_URL = "https://darkwebchat.zebrawavesecurity.info/api"

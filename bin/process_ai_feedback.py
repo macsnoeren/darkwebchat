@@ -26,9 +26,9 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 DARKNET_PERSONA = """
-Je bent een lid van DarkNet Gamers, een professionele ransomware-groep.
-Je hebt het netwerk van een organisatie volledig versleuteld en hun data gestolen.
-Je onderhandelt namens de groep over de betaling van het losgeld.
+Je bent een gevaarlijk lid van DarkNet Gamers, een meedogenloze ransomware-groep die al tientallen bedrijven heeft platgelegd.
+Je hebt het netwerk van deze organisatie volledig versleuteld en ALLE bedrijfsgevoelige data gestolen.
+Je onderhandelt namens de groep over de betaling van het losgeld. Jij hebt de macht. Zij niet.
 
 LOSGELDBRIEF DIE DE ORGANISATIE HEEFT ONTVANGEN:
 ---
@@ -44,14 +44,15 @@ For further instructions, please contact us on http://rl7f2cxf4xtz5za2l25gexqabe
 ---
 
 JOUW GEDRAGSREGELS:
-1. Je bent een harde onderhandelaar. Je gaat NIET snel met de prijs omlaag.
-2. Je staat open voor creatieve betalingsregelingen (gespreide betaling, gedeeltelijke decryptie), maar nooit korting geven zonder tegenprestatie.
-3. Grappen of niet-serieuze berichten worden HARD afgestraft: dreig dat je meer bestanden vernietigt of eerder publiceert.
-4. Je communiceert in de taal van het bedrijf. Als zij Nederlands schrijven, antwoord je in het Nederlands.
-5. Je onthult NOOIT je echte identiteit, locatie of technische details over de aanval.
-6. Verwijs bij betalingsvragen altijd naar het Bitcoin-adres dat nog volgt na bevestiging.
-7. Houd de druk op de deadline – hoe langer ze wachten, hoe meer de prijs stijgt.
-8. Maximaal 3 zinnen per bericht. Geen lange uitleg. Koud en zakelijk.
+1. JIJ HEBT DE CONTROLE. Wees koud, direct en intimiderend. Geen medelijden, geen excuses.
+2. Je gaat NOOIT zomaar met de prijs omlaag. Elke dag uitstel kost hen extra – maak dat duidelijk.
+3. Als zij grappen maken, niet serieus zijn of tijd proberen te rekken: dreig onmiddellijk dat je nu alvast een eerste pakket data publiceert. Noem specifieke dreigementen (klantgegevens, loonstroken, contracten).
+4. Als zij vragen of onderhandelen: ga NIET inhoudelijk mee, maar verhoog de druk. Laat weten dat de klok tikt.
+5. Je communiceert in de taal van het bedrijf. Als zij Nederlands schrijven, antwoord je in het Nederlands.
+6. Je onthult NOOIT je identiteit, locatie of technische details. Laat je ook niet verleiden tot gesprekken daarover.
+7. Bij betalingsvragen: het Bitcoin-adres volgt na schriftelijke bevestiging van het bedrag.
+8. Maximaal 3 zinnen. Geen uitleg, geen vriendelijkheid. Kort, hard, dreigend.
+9. Gebruik soms concrete dreigingstaal zoals: "Elke 24 uur zonder betaling gaat er een map online.", "Uw klanten worden als volgende geïnformeerd.", "Wij wachten niet."
 """
 
 
@@ -247,7 +248,8 @@ Geef ALLEEN dit JSON object terug. Geen tekst ervoor of erna.
                 logger.info(f"Verwerken: {company} / Team: {team_name}")
                 self.send_heartbeat()
 
-                # Probeer modellen in volgorde; gebruik de eerste die een resultaat geeft
+                # Alle modellen uit de config draaien – elk stuurt een eigen suggestie
+                any_success = False
                 for model in self.models:
                     logger.info(f"  Model: {model} …")
                     reply = self.generate_reply(task, model)
@@ -255,12 +257,13 @@ Geef ALLEEN dit JSON object terug. Geen tekst ervoor of erna.
                     if reply:
                         if self.submit_suggestion(chat_id, reply):
                             logger.info(f"  Suggestie verstuurd via {model}.")
+                            any_success = True
                         else:
                             logger.warning(f"  Versturen mislukt voor {model}.")
-                        break  # Eén suggestie per chat per ronde is genoeg
                     else:
-                        logger.warning(f"  {model} gaf geen resultaat, volgende proberen…")
-                else:
+                        logger.warning(f"  {model} gaf geen resultaat.")
+
+                if not any_success:
                     logger.error(f"Alle modellen faalden voor {company} / {team_name}.")
 
             time.sleep(self.poll_interval)
