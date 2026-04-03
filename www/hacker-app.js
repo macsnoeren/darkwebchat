@@ -84,6 +84,7 @@ if (isDashboard) {
     socket.emit("admin-get-tokens");
     socket.emit("admin-get-users");
     socket.emit("admin-get-api-keys");
+    socket.emit("admin-get-auto-reply");
 
     var overlay = document.getElementById("connecting-overlay");
     if (overlay) overlay.style.display = "none";
@@ -669,6 +670,74 @@ if (isDashboard) {
     socket.emit("admin-get-api-keys");
   };
 
+  // ================================================================
+  // ADMIN: AUTO-REPLY PER TEAM
+  // ================================================================
+
+  socket.on("admin-auto-reply-data", function (list) {
+    renderAutoReplyTable(list);
+  });
+
+  socket.on("admin-auto-reply-changed", function (data) {
+    // Update de toggle in de tabel zonder volledige herrender
+    var toggle = document.querySelector(".auto-reply-toggle[data-chatid='" + data.chatId + "']");
+    if (toggle) {
+      toggle.checked = data.enabled;
+      toggle.closest("tr").className = data.enabled ? "token-row-active" : "";
+    }
+    // Toon ook indicatie in bedrijfslijst zijbalk
+    updateSidebar();
+  });
+
+  // Nieuwe company verbonden → auto-reply tabel verversen
+  var _origNewCompany = null; // extend bestaande handler via refresh
+  socket.on("new-company", function () {
+    socket.emit("admin-get-auto-reply");
+  });
+
+  window.refreshAutoReply = function () {
+    socket.emit("admin-get-auto-reply");
+  };
+
+  window.toggleAutoReply = function (chatId, enabled) {
+    socket.emit("admin-set-auto-reply", { chatId: chatId, enabled: enabled });
+  };
+
+  function renderAutoReplyTable(list) {
+    var tbody = document.getElementById("auto-reply-table-body");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    if (!list || list.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--text-dim);text-align:center;padding:20px;">Geen actieve teams</td></tr>';
+      return;
+    }
+
+    list.forEach(function (item) {
+      var tr = document.createElement("tr");
+      tr.className = item.auto_reply ? "token-row-active" : "";
+      var cid = escapeHtml(item.chatId);
+      tr.innerHTML =
+        '<td>' + escapeHtml(item.company) + '</td>' +
+        '<td>' + escapeHtml(item.teamName || "\u2014") + '</td>' +
+        '<td>' +
+          '<label class="auto-reply-label">' +
+            '<input type="checkbox" class="auto-reply-toggle" data-chatid="' + cid + '" ' +
+              (item.auto_reply ? 'checked' : '') +
+              ' onchange="toggleAutoReply(\'' + cid + '\', this.checked)">' +
+            '<span class="auto-reply-switch"></span>' +
+            '<span class="auto-reply-text">' + (item.auto_reply ? 'AAN' : 'UIT') + '</span>' +
+          '</label>' +
+        '</td>';
+      // Update label text live bij toggle
+      tr.querySelector(".auto-reply-toggle").addEventListener("change", function () {
+        tr.querySelector(".auto-reply-text").textContent = this.checked ? "AAN" : "UIT";
+        tr.className = this.checked ? "token-row-active" : "";
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
   function renderApiKeysTable(keys) {
     var tbody = document.getElementById("api-keys-table-body");
     if (!tbody) return;
@@ -736,7 +805,7 @@ if (isDashboard) {
 
     if (tab === "tokens") socket.emit("admin-get-tokens");
     if (tab === "users")  socket.emit("admin-get-users");
-    if (tab === "api")    socket.emit("admin-get-api-keys");
+    if (tab === "api")  { socket.emit("admin-get-api-keys"); socket.emit("admin-get-auto-reply"); }
   };
 
   // Begin toestand

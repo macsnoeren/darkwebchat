@@ -181,6 +181,31 @@
           </tbody>
         </table>
       </div>
+
+      <!-- Auto-reply per team -->
+      <div class="hacker-chat-header" style="border-top:1px solid var(--border2);margin-top:0;">
+        <div>
+          <div class="hacker-chat-target" style="font-size:13px;">AUTO-REPLY PER TEAM</div>
+          <div class="hacker-chat-subtitle">AI stuurt direct een bericht zonder tussenkomst van de operator</div>
+        </div>
+        <div class="hacker-controls">
+          <button class="ctrl-btn" onclick="refreshAutoReply()">↻ VERNIEUWEN</button>
+        </div>
+      </div>
+      <div class="tokens-table-wrap" style="flex:0 0 auto;max-height:280px;">
+        <table class="tokens-table" id="auto-reply-table">
+          <thead>
+            <tr>
+              <th>BEDRIJF</th>
+              <th>TEAM</th>
+              <th>AUTO-REPLY</th>
+            </tr>
+          </thead>
+          <tbody id="auto-reply-table-body">
+            <tr><td colspan="3" style="color:var(--text-dim);text-align:center;padding:20px;">Geen actieve teams</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Users view (hidden by default) -->

@@ -20,6 +20,13 @@ app.use(express.json());
 
 const db = new Database(path.join(__dirname, "game.db"));
 
+// Migration: voeg auto_reply kolom toe aan sessions als die nog niet bestaat
+const pragmaSessions0 = db.prepare("PRAGMA table_info(sessions)").all();
+if (pragmaSessions0.length > 0 && !pragmaSessions0.some(c => c.name === "auto_reply")) {
+  db.exec(`ALTER TABLE sessions ADD COLUMN auto_reply INTEGER NOT NULL DEFAULT 0`);
+  console.log("Migratie: auto_reply kolom toegevoegd aan sessions.");
+}
+
 // Migration: oude tokens-tabel had chatId kolom
 const pragmaTokens = db.prepare("PRAGMA table_info(tokens)").all();
 if (pragmaTokens.some(c => c.name === "chatId")) {
@@ -44,11 +51,12 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
-    chatId    TEXT PRIMARY KEY,
-    token     TEXT NOT NULL,
-    company   TEXT NOT NULL,
-    teamName  TEXT NOT NULL DEFAULT '',
-    createdAt TEXT NOT NULL
+    chatId     TEXT PRIMARY KEY,
+    token      TEXT NOT NULL,
+    company    TEXT NOT NULL,
+    teamName   TEXT NOT NULL DEFAULT '',
+    createdAt  TEXT NOT NULL,
+    auto_reply INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS messages (
@@ -140,10 +148,11 @@ function claimExpired(claim) {
       "SELECT * FROM messages WHERE chatId = ? ORDER BY id"
     ).all(s.chatId);
     companieData[s.chatId] = {
-      company:  s.company,
-      token:    s.token,
-      teamName: s.teamName,
-      chat:     msgs.map((m) => ({
+      company:    s.company,
+      token:      s.token,
+      teamName:   s.teamName,
+      auto_reply: !!s.auto_reply,
+      chat:       msgs.map((m) => ({
         timestamp: m.timestamp,
         who:       m.who,
         chat:      m.chat,
@@ -227,8 +236,9 @@ app.get("/api", (req, res) => {
     const tasks = Object.entries(companieData)
       .filter(([chatId, data]) => {
         const claim = claims[chatId];
-        const hasCompanyMsg = data.chat.some((m) => m.who === "company");
-        return hasCompanyMsg && (!claim || claimExpired(claim));
+        const lastMsg = data.chat[data.chat.length - 1];
+        const lastIsCompany = lastMsg && lastMsg.who === "company";
+        return lastIsCompany && (!claim || claimExpired(claim));
       })
       .map(([chatId, data]) => ({
         team_id:      chatId,
@@ -278,26 +288,44 @@ app.post("/api", (req, res) => {
     }
 
     const ts = getTimeStamp();
+    const cleanMessage = message.replace(/^[\s\S]*?🤖[^\n]*\n+/, "").trim() || message.trim();
+
+    // Claim vrijgeven na suggestie
+    delete claims[chatId];
+
+    // Auto-reply: stuur direct als bericht zonder tussenkomst operator
+    if (companieData[chatId].auto_reply) {
+      const text = escape(cleanMessage);
+      const msg  = { timestamp: ts, who: "darknet", chat: text, company: companieData[chatId].company };
+      saveMessage(chatId, msg);
+      companieData[chatId].chat.push(msg);
+      io.to(chatId).emit("chat-message-darknet", msg);
+      broadcastToHackers("update-chat", { chatId, msg });
+      db.prepare(
+        "INSERT INTO ai_suggestions (chatId, agent_id, message, level_up, timestamp, status) VALUES (?, ?, ?, ?, ?, 'auto-sent')"
+      ).run(chatId, agentId, cleanMessage, levelUp, ts);
+      console.log(`[AI] Auto-reply verstuurd voor chat ${chatId} via ${agentId}`);
+      return res.json({ ok: true, auto_sent: true });
+    }
+
+    // Handmatige modus: sla op als suggestie voor de operator
     const result = db.prepare(
       "INSERT INTO ai_suggestions (chatId, agent_id, message, level_up, timestamp, status) VALUES (?, ?, ?, ?, ?, 'pending')"
-    ).run(chatId, agentId, message, levelUp, ts);
+    ).run(chatId, agentId, cleanMessage, levelUp, ts);
 
     const suggestion = {
-      id:       result.lastInsertRowid,
+      id:        result.lastInsertRowid,
       chatId,
       agentId,
-      message,
-      levelUp:  !!levelUp,
+      message:   cleanMessage,
+      levelUp:   !!levelUp,
       timestamp: ts,
-      company:  companieData[chatId].company,
-      teamName: companieData[chatId].teamName,
+      company:   companieData[chatId].company,
+      teamName:  companieData[chatId].teamName,
     };
 
     broadcastToHackers("admin-ai-suggestion", suggestion);
     console.log(`[AI] Suggestie ontvangen van ${agentId} voor chat ${chatId}`);
-
-    // Claim vrijgeven na suggestie
-    delete claims[chatId];
 
     return res.json({ ok: true, id: result.lastInsertRowid });
   }
@@ -379,7 +407,7 @@ io.on("connection", (socket) => {
 
     const newChatId = generateChatId();
     db.prepare("INSERT INTO sessions (chatId, token, company, teamName, createdAt) VALUES (?, ?, ?, ?, ?)").run(newChatId, token, company, teamName, getTimeStamp());
-    companieData[newChatId] = { company, token, teamName, chat: [] };
+    companieData[newChatId] = { company, token, teamName, auto_reply: false, chat: [] };
 
     const welcome = {
       timestamp: getTimeStamp(), who: "darknet", company,
@@ -659,6 +687,31 @@ io.on("connection", (socket) => {
     db.prepare("DELETE FROM api_keys WHERE key_value = ?").run(key);
     console.log(`[-] API-sleutel verwijderd`);
     broadcastToHackers("admin-api-keys-changed");
+  });
+
+  // ── ADMIN: get auto-reply status per team ───────────────
+  socket.on("admin-get-auto-reply", () => {
+    if (!isHacker(socket)) return;
+    const list = Object.entries(companieData).map(([chatId, d]) => ({
+      chatId,
+      company:    d.company,
+      teamName:   d.teamName,
+      auto_reply: !!d.auto_reply,
+    }));
+    socket.emit("admin-auto-reply-data", list);
+  });
+
+  // ── ADMIN: toggle auto-reply voor één team ───────────────
+  socket.on("admin-set-auto-reply", (data) => {
+    if (!isHacker(socket)) return;
+    const chatId  = String(data.chatId  || "");
+    const enabled = !!data.enabled;
+    if (!companieData[chatId]) return;
+
+    companieData[chatId].auto_reply = enabled;
+    db.prepare("UPDATE sessions SET auto_reply = ? WHERE chatId = ?").run(enabled ? 1 : 0, chatId);
+    console.log(`[AI] Auto-reply ${enabled ? "AAN" : "UIT"} voor chat ${chatId}`);
+    broadcastToHackers("admin-auto-reply-changed", { chatId, enabled });
   });
 
   // ── SETUP: check first-run ───────────────────────────────
