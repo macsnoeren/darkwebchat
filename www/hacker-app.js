@@ -83,6 +83,7 @@ if (isDashboard) {
     updateSidebar();
     socket.emit("admin-get-tokens");
     socket.emit("admin-get-users");
+    socket.emit("admin-get-api-keys");
 
     var overlay = document.getElementById("connecting-overlay");
     if (overlay) overlay.style.display = "none";
@@ -368,30 +369,6 @@ if (isDashboard) {
   };
 
   // ================================================================
-  // TAB SWITCHING
-  // ================================================================
-
-  window.switchTab = function (tab) {
-    activeTab = tab;
-
-    document.getElementById("tab-chats").classList.toggle("active",  tab === "chats");
-    document.getElementById("tab-tokens").classList.toggle("active", tab === "tokens");
-    document.getElementById("tab-users").classList.toggle("active",  tab === "users");
-
-    document.getElementById("sidebar-stats").style.display  = tab === "chats"  ? "flex"  : "none";
-    document.getElementById("companies-list").style.display = tab === "chats"  ? "block" : "none";
-    document.getElementById("tokens-panel").style.display   = tab === "tokens" ? "flex"  : "none";
-    document.getElementById("users-panel").style.display    = tab === "users"  ? "flex"  : "none";
-
-    document.getElementById("view-chat").style.display      = tab === "chats"  ? "flex"  : "none";
-    document.getElementById("view-tokens").style.display    = tab === "tokens" ? "flex"  : "none";
-    document.getElementById("view-users").style.display     = tab === "users"  ? "flex"  : "none";
-
-    if (tab === "tokens") socket.emit("admin-get-tokens");
-    if (tab === "users")  socket.emit("admin-get-users");
-  };
-
-  // ================================================================
   // TIMER
   // ================================================================
 
@@ -427,6 +404,13 @@ if (isDashboard) {
     unreadCounts[chatId] = 0;
     updateSidebar();
     renderChat(chatId);
+
+    // Toon eventuele wachtende suggestie voor deze chat
+    hideSuggestionPanel();
+    activeSuggestion = null;
+    if (suggestionQueue[chatId] && suggestionQueue[chatId].length > 0) {
+      showNextSuggestion(chatId);
+    }
 
     var targetEl   = document.getElementById("hacker-chat-target");
     var subtitleEl = document.getElementById("hacker-chat-subtitle");
@@ -571,6 +555,187 @@ if (isDashboard) {
     el.textContent = text;
     if (text) setTimeout(function () { el.textContent = ""; }, 3000);
   }
+
+  // ================================================================
+  // AI SUGGESTIES
+  // ================================================================
+
+  // Queue: suggesties per chatId { chatId: [ {id, agentId, message, levelUp, timestamp} ] }
+  var suggestionQueue = {};
+  var activeSuggestion = null; // { id, chatId, ... }
+
+  socket.on("admin-ai-suggestion", function (s) {
+    if (!suggestionQueue[s.chatId]) suggestionQueue[s.chatId] = [];
+    suggestionQueue[s.chatId].push(s);
+    playBeep();
+    // Toon direct als dit de actieve chat is en er nog geen suggestie zichtbaar is
+    if (s.chatId === selectedChatId && !activeSuggestion) {
+      showNextSuggestion(s.chatId);
+    }
+  });
+
+  socket.on("admin-suggestion-resolved", function (data) {
+    // Verwijder uit queue
+    Object.keys(suggestionQueue).forEach(function (chatId) {
+      suggestionQueue[chatId] = suggestionQueue[chatId].filter(function (s) { return s.id !== data.id; });
+    });
+    if (activeSuggestion && activeSuggestion.id === data.id) {
+      activeSuggestion = null;
+      hideSuggestionPanel();
+      // Toon volgende in queue voor de geselecteerde chat
+      if (selectedChatId && suggestionQueue[selectedChatId] && suggestionQueue[selectedChatId].length > 0) {
+        showNextSuggestion(selectedChatId);
+      }
+    }
+  });
+
+  function showNextSuggestion(chatId) {
+    var queue = suggestionQueue[chatId];
+    if (!queue || queue.length === 0) { hideSuggestionPanel(); return; }
+    var s = queue[0];
+    activeSuggestion = s;
+
+    var panel   = document.getElementById("suggestion-panel");
+    var textEl  = document.getElementById("suggestion-text");
+    var agentEl = document.getElementById("suggestion-agent");
+    if (!panel) return;
+
+    if (agentEl) agentEl.textContent = s.agentId + " \u2502 " + s.timestamp;
+    if (textEl)  textEl.textContent  = s.message;
+    panel.style.display = "flex";
+  }
+
+  function hideSuggestionPanel() {
+    var panel = document.getElementById("suggestion-panel");
+    if (panel) panel.style.display = "none";
+    activeSuggestion = null;
+  }
+
+  window.useSuggestion = function () {
+    if (!activeSuggestion || !selectedChatId) return;
+    socket.emit("admin-use-suggestion", { id: activeSuggestion.id, chatId: selectedChatId });
+  };
+
+  window.dismissSuggestion = function () {
+    if (!activeSuggestion) return;
+    socket.emit("admin-dismiss-suggestion", { id: activeSuggestion.id });
+  };
+
+  // ================================================================
+  // ADMIN: API-SLEUTELS
+  // ================================================================
+
+  socket.on("admin-api-keys-data", function (keys) {
+    renderApiKeysTable(keys);
+    renderApiKeysSidebar(keys);
+  });
+
+  socket.on("admin-api-key-created", function (data) {
+    socket.emit("admin-get-api-keys");
+    // Toon de volledige sleutel eenmalig zodat de operator hem kan kopiëren
+    showAdminMsg("api-admin-error", false, "");
+    var panel = document.getElementById("api-admin-error");
+    if (panel) {
+      panel.style.color     = "var(--green)";
+      panel.style.wordBreak = "break-all";
+      panel.textContent     = "\u2713 Sleutel: " + data.key;
+      // Niet auto-verbergen – operator moet hem kunnen kopiëren
+    }
+    document.getElementById("new-api-name").value = "";
+  });
+
+  socket.on("admin-api-keys-changed", function () {
+    socket.emit("admin-get-api-keys");
+  });
+
+  window.createApiKey = function () {
+    var name = (document.getElementById("new-api-name").value || "").trim();
+    showAdminMsg("api-admin-error", false, "");
+    if (!name) {
+      showAdminMsg("api-admin-error", false, "Geef de sleutel een naam.");
+      return;
+    }
+    socket.emit("admin-create-api-key", { name: name });
+  };
+
+  window.deleteApiKey = function (key) {
+    if (!confirm("API-sleutel verwijderen? Agents die deze sleutel gebruiken verliezen toegang.")) return;
+    socket.emit("admin-delete-api-key", { key: key });
+  };
+
+  window.refreshApiKeys = function () {
+    socket.emit("admin-get-api-keys");
+  };
+
+  function renderApiKeysTable(keys) {
+    var tbody = document.getElementById("api-keys-table-body");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    if (!keys || keys.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-dim);text-align:center;padding:20px;">Geen API-sleutels</td></tr>';
+      return;
+    }
+
+    keys.forEach(function (k) {
+      var masked = k.key_value.slice(0, 6) + "••••••••••••••••••••••••••" + k.key_value.slice(-4);
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td>' + escapeHtml(k.name) + '</td>' +
+        '<td class="td-token" style="font-size:11px;color:var(--text-dim);">' + escapeHtml(masked) + '</td>' +
+        '<td style="color:var(--text-dim);font-size:11px;">' + escapeHtml(k.created_at) + '</td>' +
+        '<td><button class="token-del-btn" onclick="deleteApiKey(\'' + escapeHtml(k.key_value) + '\')">\u2715</button></td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  function renderApiKeysSidebar(keys) {
+    var list = document.getElementById("api-keys-list");
+    if (!list) return;
+    list.innerHTML = "";
+
+    if (!keys || keys.length === 0) {
+      list.innerHTML = '<div style="padding:12px;color:var(--text-dim);font-size:11px;">Geen sleutels</div>';
+      return;
+    }
+
+    keys.forEach(function (k) {
+      var item = document.createElement("div");
+      item.className = "token-list-item";
+      item.innerHTML =
+        '<div class="token-code" style="color:var(--yellow)">' + escapeHtml(k.name) + '</div>' +
+        '<div class="token-meta" style="font-size:10px;">' + escapeHtml(k.key_value.slice(0, 10)) + '…</div>' +
+        '<button class="token-del-btn-sm" onclick="deleteApiKey(\'' + escapeHtml(k.key_value) + '\')">\u2715</button>';
+      list.appendChild(item);
+    });
+  }
+
+  // ================================================================
+  // TAB SWITCHING  (vervang de oude functie)
+  // ================================================================
+
+  window.switchTab = function (tab) {
+    activeTab = tab;
+
+    ["chats", "tokens", "users", "api"].forEach(function (t) {
+      document.getElementById("tab-" + t).classList.toggle("active", t === tab);
+    });
+
+    document.getElementById("sidebar-stats").style.display  = tab === "chats"  ? "flex"  : "none";
+    document.getElementById("companies-list").style.display = tab === "chats"  ? "block" : "none";
+    document.getElementById("tokens-panel").style.display   = tab === "tokens" ? "flex"  : "none";
+    document.getElementById("users-panel").style.display    = tab === "users"  ? "flex"  : "none";
+    document.getElementById("api-panel").style.display      = tab === "api"    ? "flex"  : "none";
+
+    document.getElementById("view-chat").style.display      = tab === "chats"  ? "flex"  : "none";
+    document.getElementById("view-tokens").style.display    = tab === "tokens" ? "flex"  : "none";
+    document.getElementById("view-users").style.display     = tab === "users"  ? "flex"  : "none";
+    document.getElementById("view-api").style.display       = tab === "api"    ? "flex"  : "none";
+
+    if (tab === "tokens") socket.emit("admin-get-tokens");
+    if (tab === "users")  socket.emit("admin-get-users");
+    if (tab === "api")    socket.emit("admin-get-api-keys");
+  };
 
   // Begin toestand
   showEmptyChat();

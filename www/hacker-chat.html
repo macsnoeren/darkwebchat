@@ -27,6 +27,7 @@
       <button id="tab-chats"  class="sidebar-tab active" onclick="switchTab('chats')">CHATS</button>
       <button id="tab-tokens" class="sidebar-tab"        onclick="switchTab('tokens')">TOKENS</button>
       <button id="tab-users"  class="sidebar-tab"        onclick="switchTab('users')">USERS</button>
+      <button id="tab-api"   class="sidebar-tab"        onclick="switchTab('api')">API</button>
     </div>
 
     <!-- Stats (chats tab) -->
@@ -50,6 +51,19 @@
         <div id="token-admin-error" class="token-admin-error"></div>
       </div>
       <div id="tokens-list" class="tokens-list">
+        <div style="padding:12px;color:var(--text-dim);font-size:11px;">Laden...</div>
+      </div>
+    </div>
+
+    <!-- API keys list (api tab, hidden by default) -->
+    <div id="api-panel" class="tokens-panel" style="display:none">
+      <div class="token-create-form">
+        <div class="token-form-title">NIEUWE API-SLEUTEL</div>
+        <input type="text" id="new-api-name" class="token-input-field" placeholder="Naam (bijv. AI Agent 1)" maxlength="40" autocomplete="off">
+        <button class="token-create-btn" onclick="createApiKey()">+ AANMAKEN</button>
+        <div id="api-admin-error" class="token-admin-error"></div>
+      </div>
+      <div id="api-keys-list" class="tokens-list">
         <div style="padding:12px;color:var(--text-dim);font-size:11px;">Laden...</div>
       </div>
     </div>
@@ -92,6 +106,19 @@
         </div>
       </div>
 
+      <!-- AI suggesties (verschijnen als er een voorstel binnenkomt) -->
+      <div id="suggestion-panel" class="suggestion-panel" style="display:none">
+        <div class="suggestion-header">
+          <span class="suggestion-label">⬡ AI SUGGESTIE</span>
+          <span id="suggestion-agent" class="suggestion-agent"></span>
+        </div>
+        <div id="suggestion-text" class="suggestion-text"></div>
+        <div class="suggestion-actions">
+          <button class="suggestion-btn use"     onclick="useSuggestion()">GEBRUIK</button>
+          <button class="suggestion-btn dismiss" onclick="dismissSuggestion()">NEGEER</button>
+        </div>
+      </div>
+
       <form id="hacker-form" class="hacker-form" style="display:none">
         <input type="text" id="hacker-input" class="hacker-input"
                placeholder="Typ uw bericht als operator..." autocomplete="off">
@@ -123,6 +150,34 @@
           </thead>
           <tbody id="tokens-table-body">
             <tr><td colspan="6" style="color:var(--text-dim);text-align:center;padding:20px;">Laden...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- API keys view (hidden by default) -->
+    <div id="view-api" class="view-panel" style="display:none">
+      <div class="hacker-chat-header">
+        <div>
+          <div class="hacker-chat-target">API-SLEUTELS</div>
+          <div class="hacker-chat-subtitle">Toegangssleutels voor externe AI-agents — nooit delen</div>
+        </div>
+        <div class="hacker-controls">
+          <button class="ctrl-btn" onclick="refreshApiKeys()">↻ VERNIEUWEN</button>
+        </div>
+      </div>
+      <div class="tokens-table-wrap">
+        <table class="tokens-table" id="api-keys-table">
+          <thead>
+            <tr>
+              <th>NAAM</th>
+              <th>SLEUTEL (gedeeltelijk)</th>
+              <th>AANGEMAAKT</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="api-keys-table-body">
+            <tr><td colspan="4" style="color:var(--text-dim);text-align:center;padding:20px;">Laden...</td></tr>
           </tbody>
         </table>
       </div>

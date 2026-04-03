@@ -1,11 +1,10 @@
 # config.py
 
-# API-sleutel voor de webapplicatie
-# API_KEY = "e35efff426264333486125c4633ab55f96f7270cf9d7fcf6c5ea777fa6f9d689"
-API_KEY = "c4d8132346b5420ec4b11b0fdfa55b9dd82bea5d116caa26659581181535b858"
+# API-sleutel om bij DARKNET WEB CHAT de antwoorden te kunnen halen.
+API_KEY = ""
 
 # URL van de webapplicatie API
-BASE_URL = "https://leaderboard.zebrawavestudios.com/api.php"
+BASE_URL = "http://localhost:3000/api"
 
 # URL van de Ollama API
 OLLAMA_URL = "http://localhost:11434/api/generate"

@@ -12,6 +12,7 @@ const io     = new Server(server);
 
 process.env.TZ = "UTC";
 app.use(express.static("www"));
+app.use(express.json());
 
 // ============================================================
 // DATABASE SETUP
@@ -19,7 +20,7 @@ app.use(express.static("www"));
 
 const db = new Database(path.join(__dirname, "game.db"));
 
-// Migration: als de tokens tabel nog een chatId kolom heeft (oud schema), migreren
+// Migration: oude tokens-tabel had chatId kolom
 const pragmaTokens = db.prepare("PRAGMA table_info(tokens)").all();
 if (pragmaTokens.some(c => c.name === "chatId")) {
   console.log("Oud schema gedetecteerd – database migreren...");
@@ -29,7 +30,6 @@ if (pragmaTokens.some(c => c.name === "chatId")) {
     DROP TABLE tokens;
     ALTER TABLE tokens_new RENAME TO tokens;
   `);
-  // Voeg token-kolom toe aan sessions als die er nog niet is
   const pragmaSessions = db.prepare("PRAGMA table_info(sessions)").all();
   if (!pragmaSessions.some(c => c.name === "token")) {
     db.exec(`ALTER TABLE sessions ADD COLUMN token TEXT NOT NULL DEFAULT ''`);
@@ -63,6 +63,22 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     username TEXT PRIMARY KEY,
     password TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS api_keys (
+    key_value  TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS ai_suggestions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    chatId     TEXT NOT NULL,
+    agent_id   TEXT NOT NULL,
+    message    TEXT NOT NULL,
+    level_up   INTEGER NOT NULL DEFAULT 0,
+    timestamp  TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'pending'
   );
 `);
 
@@ -103,12 +119,19 @@ const gameDeadline        = new Date(Date.now() + 4 * 60 * 60 * 1000);
 const gameDurationSeconds = 4 * 60 * 60;
 
 // ============================================================
-// RUNTIME STATE  (rebuilt from DB on startup)
+// RUNTIME STATE
 // ============================================================
 
-let companieData   = {};  // { [chatId]: { company, token, teamName, chat: [] } }
+let companieData   = {};
 let hackerSockets  = [];
 let hackerSessions = {};  // { sessionToken: username }
+let claims         = {};  // { chatId: { agentId, claimedAt } }  – in-memory, expires 5 min
+
+const CLAIM_TTL_MS = 5 * 60 * 1000;
+
+function claimExpired(claim) {
+  return Date.now() - claim.claimedAt > CLAIM_TTL_MS;
+}
 
 (function loadFromDB() {
   const sessions = db.prepare("SELECT * FROM sessions").all();
@@ -159,11 +182,143 @@ function generateChatId() {
   return Array.from({ length: 25 }, () => c[Math.floor(Math.random() * c.length)]).join("");
 }
 
+function generateApiKey() {
+  const hex = "abcdef0123456789";
+  const rand = Array.from({ length: 32 }, () => hex[Math.floor(Math.random() * hex.length)]).join("");
+  return "dk_" + rand;
+}
+
 function saveMessage(chatId, msg) {
   db.prepare(
     "INSERT INTO messages (chatId, timestamp, who, chat, company) VALUES (?, ?, ?, ?, ?)"
   ).run(chatId, msg.timestamp, msg.who, msg.chat, msg.company);
 }
+
+function validateApiKey(req) {
+  const key = req.headers["x-api-token"] || req.query.token || "";
+  return !!db.prepare("SELECT key_value FROM api_keys WHERE key_value = ?").get(key);
+}
+
+function formatChatHistory(chatId) {
+  const data = companieData[chatId];
+  if (!data) return "";
+  return data.chat.map((m) => {
+    const sender = m.who === "darknet"
+      ? "DarkNet Operator"
+      : `${m.company}${data.teamName ? " (Team: " + data.teamName + ")" : ""}`;
+    return `[${m.timestamp}] ${sender}: ${m.chat}`;
+  }).join("\n");
+}
+
+// ============================================================
+// REST API  –  /api
+// ============================================================
+
+const API_INSTRUCTION =
+  "Jij bent een DarkNet ransomware negotiation operator. " +
+  "Jouw doel is om de organisatie te bewegen tot betaling van het losgeld. " +
+  "Analyseer de chatgeschiedenis en stel het volgende bericht voor dat jij als operator zou sturen. " +
+  "Wees professioneel maar dreigend. Onthul nooit je ware identiteit of locatie.";
+
+const API_CRITERIA =
+  "Het voorgestelde bericht moet: (1) druk uitoefenen op de deadline, " +
+  "(2) de organisatie dichter bij betaling brengen, " +
+  "(3) professioneel en geloofwaardig klinken als ransomware operator, " +
+  "(4) kort en krachtig zijn (maximaal 3 zinnen).";
+
+app.get("/api", (req, res) => {
+  if (!validateApiKey(req)) {
+    return res.status(401).json({ error: "Authenticatie mislukt. Controleer je API_KEY." });
+  }
+
+  const action = req.query.action || "";
+
+  if (action === "get_pending") {
+    // Return all active chats that are not currently claimed
+    const tasks = Object.entries(companieData)
+      .filter(([chatId]) => {
+        const claim = claims[chatId];
+        return !claim || claimExpired(claim);
+      })
+      .map(([chatId, data]) => ({
+        team_id:      chatId,
+        team_name:    `${data.company}${data.teamName ? " | Team: " + data.teamName : ""}`,
+        instruction:  API_INSTRUCTION,
+        criteria:     API_CRITERIA,
+        chat_history: formatChatHistory(chatId),
+      }));
+
+    return res.json(tasks);
+  }
+
+  return res.status(400).json({ error: "Onbekende actie." });
+});
+
+app.post("/api", (req, res) => {
+  if (!validateApiKey(req)) {
+    return res.status(401).json({ error: "Authenticatie mislukt. Controleer je API_KEY." });
+  }
+
+  const action   = req.query.action || "";
+  const body     = req.body || {};
+  const agentId  = String(body.agent_id || "unknown");
+
+  if (action === "claim_task") {
+    const chatId = String(body.team_id || "");
+    if (!companieData[chatId]) {
+      return res.status(404).json({ error: "Chat niet gevonden." });
+    }
+    const existing = claims[chatId];
+    if (existing && !claimExpired(existing) && existing.agentId !== agentId) {
+      return res.status(409).json({ error: "Al geclaimd door een andere agent." });
+    }
+    claims[chatId] = { agentId, claimedAt: Date.now() };
+    return res.json({ ok: true });
+  }
+
+  if (action === "send_suggestion") {
+    const chatId  = String(body.team_id || "");
+    const message = String(body.message  || "").trim();
+    const levelUp = body.level_up ? 1 : 0;
+
+    if (!companieData[chatId]) {
+      return res.status(404).json({ error: "Chat niet gevonden." });
+    }
+    if (!message) {
+      return res.status(400).json({ error: "Bericht is leeg." });
+    }
+
+    const ts = getTimeStamp();
+    const result = db.prepare(
+      "INSERT INTO ai_suggestions (chatId, agent_id, message, level_up, timestamp, status) VALUES (?, ?, ?, ?, ?, 'pending')"
+    ).run(chatId, agentId, message, levelUp, ts);
+
+    const suggestion = {
+      id:       result.lastInsertRowid,
+      chatId,
+      agentId,
+      message,
+      levelUp:  !!levelUp,
+      timestamp: ts,
+      company:  companieData[chatId].company,
+      teamName: companieData[chatId].teamName,
+    };
+
+    broadcastToHackers("admin-ai-suggestion", suggestion);
+    console.log(`[AI] Suggestie ontvangen van ${agentId} voor chat ${chatId}`);
+
+    // Claim vrijgeven na suggestie
+    delete claims[chatId];
+
+    return res.json({ ok: true, id: result.lastInsertRowid });
+  }
+
+  if (action === "heartbeat" || action === "unregister_agent") {
+    return res.json({ ok: true });
+  }
+
+  return res.status(400).json({ error: "Onbekende actie." });
+});
 
 // ============================================================
 // SOCKET HANDLERS
@@ -173,49 +328,31 @@ io.on("connection", (socket) => {
   socket._data = { valid: false, company: "", chatId: "", teamName: "", token: "" };
 
   // ── COMPANY: validate token ──────────────────────────────
-  //
-  // Drie gevallen:
-  //   1. { token }               → vraag teamnaam (eerste keer op landing page)
-  //   2. { token, teamName }     → maak nieuwe sessie of reconnect op bestaande (zelfde team)
-  //   3. { token, chatId }       → herverbind chat-pagina met bestaande sessie
-  //
   socket.on("token-login", (data) => {
     const token    = String(data.token    || "").trim().toUpperCase();
     const teamName = String(data.teamName || "").trim();
     const chatId   = String(data.chatId   || "").trim();
 
     const entry = db.prepare("SELECT * FROM tokens WHERE token = ?").get(token);
-    if (!entry) {
-      socket.emit("token-invalid");
-      return;
-    }
+    if (!entry) { socket.emit("token-invalid"); return; }
 
     const { company } = entry;
 
-    // ── Geval 3: herverbinding vanuit chat-pagina via chatId ──
+    // Geval 3: herverbinding vanuit chat-pagina via chatId
     if (chatId) {
-      const session = db.prepare(
-        "SELECT * FROM sessions WHERE chatId = ? AND token = ?"
-      ).get(chatId, token);
-
-      if (!session) {
-        socket.emit("token-invalid");
-        return;
-      }
+      const session = db.prepare("SELECT * FROM sessions WHERE chatId = ? AND token = ?").get(chatId, token);
+      if (!session) { socket.emit("token-invalid"); return; }
 
       if (!companieData[chatId]) {
         const msgs = db.prepare("SELECT * FROM messages WHERE chatId = ? ORDER BY id").all(chatId);
         companieData[chatId] = {
-          company,
-          token,
-          teamName: session.teamName,
+          company, token, teamName: session.teamName,
           chat: msgs.map((m) => ({ timestamp: m.timestamp, who: m.who, chat: m.chat, company: m.company })),
         };
       }
 
       socket._data = { valid: true, company, chatId, teamName: session.teamName, token };
       socket.join(chatId);
-
       socket.emit("token-valid", { company, chatId, teamName: session.teamName });
       socket.emit("timeleft", getTimerData());
       companieData[chatId].chat.forEach((msg) => {
@@ -225,19 +362,13 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // ── Geval 1: geen teamnaam → vraag het op ────────────────
-    if (!teamName) {
-      socket.emit("token-needs-team", { company });
-      return;
-    }
+    // Geval 1: geen teamnaam → vraag het op
+    if (!teamName) { socket.emit("token-needs-team", { company }); return; }
 
-    // ── Geval 2: token + teamnaam → nieuwe of bestaande sessie
-    const existingSession = db.prepare(
-      "SELECT * FROM sessions WHERE token = ? AND teamName = ?"
-    ).get(token, teamName);
+    // Geval 2: token + teamnaam → bestaande of nieuwe sessie
+    const existingSession = db.prepare("SELECT * FROM sessions WHERE token = ? AND teamName = ?").get(token, teamName);
 
     if (existingSession) {
-      // Zelfde team herverbindt (bijv. pagina herladen vóór chat-pagina geladen is)
       const eid = existingSession.chatId;
       if (!companieData[eid]) {
         const msgs = db.prepare("SELECT * FROM messages WHERE chatId = ? ORDER BY id").all(eid);
@@ -248,7 +379,6 @@ io.on("connection", (socket) => {
       }
       socket._data = { valid: true, company, chatId: eid, teamName, token };
       socket.join(eid);
-
       socket.emit("token-valid", { company, chatId: eid, teamName });
       socket.emit("timeleft", getTimerData());
       companieData[eid].chat.forEach((msg) => {
@@ -258,33 +388,23 @@ io.on("connection", (socket) => {
       return;
     }
 
-    // Nieuw team met deze code
     const newChatId = generateChatId();
-    db.prepare(
-      "INSERT INTO sessions (chatId, token, company, teamName, createdAt) VALUES (?, ?, ?, ?, ?)"
-    ).run(newChatId, token, company, teamName, getTimeStamp());
-
+    db.prepare("INSERT INTO sessions (chatId, token, company, teamName, createdAt) VALUES (?, ?, ?, ?, ?)").run(newChatId, token, company, teamName, getTimeStamp());
     companieData[newChatId] = { company, token, teamName, chat: [] };
 
     const welcome = {
-      timestamp: getTimeStamp(),
-      who:       "darknet",
-      chat:      "[ SYSTEEM MELDING ] Uw netwerk is gecompromitteerd door DarkNet Operators. Alle bestanden zijn versleuteld met AES-256 militaire encryptie. Om de decryptiesleutel te ontvangen dient u onze instructies op te volgen. Deel GEEN informatie met derden. Uw tijd is beperkt. Een negotiator neemt spoedig contact met u op.",
-      company,
+      timestamp: getTimeStamp(), who: "darknet", company,
+      chat: "[ SYSTEEM MELDING ] Uw netwerk is gecompromitteerd door DarkNet Operators. Alle bestanden zijn versleuteld met AES-256 militaire encryptie. Om de decryptiesleutel te ontvangen dient u onze instructies op te volgen. Deel GEEN informatie met derden. Uw tijd is beperkt. Een negotiator neemt spoedig contact met u op.",
     };
     saveMessage(newChatId, welcome);
     companieData[newChatId].chat.push(welcome);
 
     socket._data = { valid: true, company, chatId: newChatId, teamName, token };
     socket.join(newChatId);
-
     socket.emit("token-valid", { company, chatId: newChatId, teamName });
     socket.emit("timeleft", getTimerData());
     socket.emit("chat-message-darknet", welcome);
-    broadcastToHackers("new-company", {
-      chatId: newChatId, company, token, teamName, chat: companieData[newChatId].chat,
-    });
-
+    broadcastToHackers("new-company", { chatId: newChatId, company, token, teamName, chat: companieData[newChatId].chat });
     console.log(`[+] Nieuwe sessie: ${company} / Team: ${teamName} (token: ${token})`);
   });
 
@@ -308,41 +428,50 @@ io.on("connection", (socket) => {
   socket.on("hacker-login", (data) => {
     const username = String(data.username || "").trim();
     const password = String(data.password || "").trim();
-
     const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
     if (!user || user.password !== password) {
       socket.emit("hacker-login-failed", { message: "Ongeldige inloggegevens." });
       return;
     }
-
     const sessionToken = generateChatId();
     hackerSessions[sessionToken] = username;
-
     socket.emit("hacker-login-success", { sessionToken });
     console.log(`[+] Operator ingelogd: ${username}`);
   });
 
-  // ── HACKER: session auth (dashboard reconnect) ───────────
+  // ── HACKER: session auth ─────────────────────────────────
   socket.on("hacker-session-auth", (data) => {
     const sessionToken = String(data.sessionToken || "");
     const username     = hackerSessions[sessionToken];
-
     if (!username) {
       socket.emit("hacker-login-failed", { message: "Sessie ongeldig of verlopen." });
       return;
     }
-
     if (!isHacker(socket)) hackerSockets.push(socket);
     socket._data.isHacker = true;
     socket._data.username = username;
-
-    socket.emit("hacker-login-success", {
-      username,
-      companyData: companieData,
-      timeleft:    getTimerData(),
-    });
-
+    socket.emit("hacker-login-success", { username, companyData: companieData, timeleft: getTimerData() });
     console.log(`[~] Operator sessie hersteld: ${username}`);
+
+    // Stuur openstaande suggesties mee
+    const pending = db.prepare(
+      "SELECT * FROM ai_suggestions WHERE status = 'pending' ORDER BY id"
+    ).all();
+    if (pending.length > 0) {
+      pending.forEach((s) => {
+        const cd = companieData[s.chatId];
+        socket.emit("admin-ai-suggestion", {
+          id:        s.id,
+          chatId:    s.chatId,
+          agentId:   s.agent_id,
+          message:   s.message,
+          levelUp:   !!s.level_up,
+          timestamp: s.timestamp,
+          company:   cd ? cd.company  : "?",
+          teamName:  cd ? cd.teamName : "?",
+        });
+      });
+    }
   });
 
   // ── HACKER: send message ─────────────────────────────────
@@ -354,12 +483,7 @@ io.on("connection", (socket) => {
     const text = escape(String(data.msg || "").trim());
     if (!text) return;
 
-    const msg = {
-      timestamp: getTimeStamp(),
-      who:       "darknet",
-      chat:      text,
-      company:   companieData[chatId].company,
-    };
+    const msg = { timestamp: getTimeStamp(), who: "darknet", chat: text, company: companieData[chatId].company };
     saveMessage(chatId, msg);
     companieData[chatId].chat.push(msg);
     io.to(chatId).emit("chat-message-darknet", msg);
@@ -371,37 +495,56 @@ io.on("connection", (socket) => {
     if (!isHacker(socket)) return;
     const chatId = String(data.chatId || "");
     if (!companieData[chatId]) return;
-
     console.log(`[-] Chat verwijderd: ${companieData[chatId].company} / ${companieData[chatId].teamName}`);
     delete companieData[chatId];
     broadcastToHackers("chat-deleted", { chatId });
   });
 
+  // ── HACKER: gebruik AI-suggestie als bericht ─────────────
+  socket.on("admin-use-suggestion", (data) => {
+    if (!isHacker(socket)) return;
+    const id     = Number(data.id);
+    const chatId = String(data.chatId || "");
+    if (!companieData[chatId]) return;
+
+    const suggestion = db.prepare("SELECT * FROM ai_suggestions WHERE id = ? AND status = 'pending'").get(id);
+    if (!suggestion) return;
+
+    const text = escape(suggestion.message);
+    const msg  = { timestamp: getTimeStamp(), who: "darknet", chat: text, company: companieData[chatId].company };
+    saveMessage(chatId, msg);
+    companieData[chatId].chat.push(msg);
+    io.to(chatId).emit("chat-message-darknet", msg);
+    broadcastToHackers("update-chat", { chatId, msg });
+
+    db.prepare("UPDATE ai_suggestions SET status = 'used' WHERE id = ?").run(id);
+    broadcastToHackers("admin-suggestion-resolved", { id, status: "used" });
+    console.log(`[AI] Suggestie #${id} gebruikt door operator`);
+  });
+
+  // ── HACKER: negeer AI-suggestie ──────────────────────────
+  socket.on("admin-dismiss-suggestion", (data) => {
+    if (!isHacker(socket)) return;
+    const id = Number(data.id);
+    db.prepare("UPDATE ai_suggestions SET status = 'dismissed' WHERE id = ?").run(id);
+    broadcastToHackers("admin-suggestion-resolved", { id, status: "dismissed" });
+    console.log(`[AI] Suggestie #${id} genegeerd`);
+  });
+
   // ── ADMIN: get token list ────────────────────────────────
   socket.on("admin-get-tokens", () => {
     if (!isHacker(socket)) return;
-
     const tokens = db.prepare("SELECT * FROM tokens ORDER BY token").all();
     const enriched = tokens.map((t) => {
-      const sessions = db.prepare(
-        "SELECT chatId, teamName FROM sessions WHERE token = ? ORDER BY createdAt"
-      ).all(t.token);
-
+      const sessions = db.prepare("SELECT chatId, teamName FROM sessions WHERE token = ? ORDER BY createdAt").all(t.token);
       const teams = sessions.map((s) => ({
         chatId:       s.chatId,
         teamName:     s.teamName,
         active:       !!companieData[s.chatId],
         messageCount: companieData[s.chatId] ? companieData[s.chatId].chat.length : 0,
       }));
-
-      return {
-        token:       t.token,
-        company:     t.company,
-        teams,
-        activeCount: teams.filter((t) => t.active).length,
-      };
+      return { token: t.token, company: t.company, teams, activeCount: teams.filter((t) => t.active).length };
     });
-
     socket.emit("admin-tokens-data", enriched);
   });
 
@@ -410,7 +553,6 @@ io.on("connection", (socket) => {
     if (!isHacker(socket)) return;
     const token   = String(data.token   || "").trim().toUpperCase();
     const company = String(data.company || "").trim();
-
     if (!token || !company) return;
     if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(token)) {
       socket.emit("admin-error", { message: "Token formaat ongeldig. Gebruik bijv. XXXX-XXXX." });
@@ -420,9 +562,7 @@ io.on("connection", (socket) => {
       socket.emit("admin-error", { message: "Token bestaat al." });
       return;
     }
-
     db.prepare("INSERT INTO tokens (token, company) VALUES (?, ?)").run(token, company);
-    console.log(`[+] Token aangemaakt: ${token} → ${company}`);
     broadcastToHackers("admin-token-created", { token, company });
   });
 
@@ -432,8 +572,6 @@ io.on("connection", (socket) => {
     const token = String(data.token || "").trim().toUpperCase();
     const entry = db.prepare("SELECT * FROM tokens WHERE token = ?").get(token);
     if (!entry) return;
-
-    // Verwijder alle gekoppelde sessies en berichten
     const sessions = db.prepare("SELECT chatId FROM sessions WHERE token = ?").all(token);
     sessions.forEach((s) => {
       delete companieData[s.chatId];
@@ -441,8 +579,6 @@ io.on("connection", (socket) => {
     });
     db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
     db.prepare("DELETE FROM tokens WHERE token = ?").run(token);
-
-    console.log(`[-] Token verwijderd: ${token} (${sessions.length} sessie(s) gewist)`);
     broadcastToHackers("admin-token-deleted", { token });
   });
 
@@ -458,7 +594,6 @@ io.on("connection", (socket) => {
     if (!isHacker(socket)) return;
     const username = String(data.username || "").trim();
     const password = String(data.password || "").trim();
-
     if (!username || !password) return;
     if (!/^[a-zA-Z0-9_-]{2,20}$/.test(username)) {
       socket.emit("admin-error", { message: "Gebruikersnaam ongeldig (2-20 tekens, a-z 0-9 _ -)." });
@@ -468,9 +603,7 @@ io.on("connection", (socket) => {
       socket.emit("admin-error", { message: "Gebruikersnaam bestaat al." });
       return;
     }
-
     db.prepare("INSERT INTO users (username, password) VALUES (?, ?)").run(username, password);
-    console.log(`[+] Gebruiker aangemaakt: ${username}`);
     broadcastToHackers("admin-user-created", { username });
   });
 
@@ -479,15 +612,12 @@ io.on("connection", (socket) => {
     if (!isHacker(socket)) return;
     const username = String(data.username || "").trim();
     const password = String(data.password || "").trim();
-
     if (!username || !password) return;
     if (!db.prepare("SELECT username FROM users WHERE username = ?").get(username)) {
       socket.emit("admin-error", { message: "Gebruiker niet gevonden." });
       return;
     }
-
     db.prepare("UPDATE users SET password = ? WHERE username = ?").run(password, username);
-    console.log(`[~] Wachtwoord gereset: ${username}`);
     socket.emit("admin-user-created", { username });
   });
 
@@ -495,16 +625,45 @@ io.on("connection", (socket) => {
   socket.on("admin-delete-user", (data) => {
     if (!isHacker(socket)) return;
     const username = String(data.username || "").trim();
-
     const count = db.prepare("SELECT COUNT(*) AS n FROM users").get();
     if (count.n <= 1) {
       socket.emit("admin-error", { message: "Kan de laatste gebruiker niet verwijderen." });
       return;
     }
-
     db.prepare("DELETE FROM users WHERE username = ?").run(username);
-    console.log(`[-] Gebruiker verwijderd: ${username}`);
     broadcastToHackers("admin-user-deleted", { username });
+  });
+
+  // ── ADMIN: get API-keys ──────────────────────────────────
+  socket.on("admin-get-api-keys", () => {
+    if (!isHacker(socket)) return;
+    const keys = db.prepare("SELECT key_value, name, created_at FROM api_keys ORDER BY created_at DESC").all();
+    socket.emit("admin-api-keys-data", keys);
+  });
+
+  // ── ADMIN: create API-key ────────────────────────────────
+  socket.on("admin-create-api-key", (data) => {
+    if (!isHacker(socket)) return;
+    const name = String(data.name || "").trim();
+    if (!name) {
+      socket.emit("admin-error", { message: "Geef de API-sleutel een naam." });
+      return;
+    }
+    const key = generateApiKey();
+    db.prepare("INSERT INTO api_keys (key_value, name, created_at) VALUES (?, ?, ?)").run(key, name, getTimeStamp());
+    console.log(`[+] API-sleutel aangemaakt: ${name}`);
+    // Stuur de volledige key eenmalig terug zodat de operator hem kan kopiëren
+    socket.emit("admin-api-key-created", { key, name });
+    broadcastToHackers("admin-api-keys-changed");
+  });
+
+  // ── ADMIN: delete API-key ────────────────────────────────
+  socket.on("admin-delete-api-key", (data) => {
+    if (!isHacker(socket)) return;
+    const key = String(data.key || "").trim();
+    db.prepare("DELETE FROM api_keys WHERE key_value = ?").run(key);
+    console.log(`[-] API-sleutel verwijderd`);
+    broadcastToHackers("admin-api-keys-changed");
   });
 
   // ── SETUP: check first-run ───────────────────────────────
@@ -516,26 +675,12 @@ io.on("connection", (socket) => {
   // ── SETUP: create first operator ─────────────────────────
   socket.on("operator-setup", (data) => {
     const n = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
-    if (n > 0) {
-      socket.emit("setup-error", { message: "Setup is al voltooid." });
-      return;
-    }
+    if (n > 0) { socket.emit("setup-error", { message: "Setup is al voltooid." }); return; }
     const username = String(data.username || "").trim();
     const password = String(data.password || "").trim();
-
-    if (!username || !password) {
-      socket.emit("setup-error", { message: "Vul beide velden in." });
-      return;
-    }
-    if (!/^[a-zA-Z0-9_-]{2,20}$/.test(username)) {
-      socket.emit("setup-error", { message: "Gebruikersnaam ongeldig (2-20 tekens, a-z 0-9 _ -)." });
-      return;
-    }
-    if (password.length < 6) {
-      socket.emit("setup-error", { message: "Wachtwoord moet minimaal 6 tekens zijn." });
-      return;
-    }
-
+    if (!username || !password) { socket.emit("setup-error", { message: "Vul beide velden in." }); return; }
+    if (!/^[a-zA-Z0-9_-]{2,20}$/.test(username)) { socket.emit("setup-error", { message: "Gebruikersnaam ongeldig." }); return; }
+    if (password.length < 6) { socket.emit("setup-error", { message: "Wachtwoord minimaal 6 tekens." }); return; }
     db.prepare("INSERT INTO users (username, password) VALUES (?, ?)").run(username, password);
     console.log(`[+] Eerste operator aangemaakt: ${username}`);
     socket.emit("setup-done", { username });
@@ -554,5 +699,6 @@ io.on("connection", (socket) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`\nDarkWebChat draait op poort ${PORT}`);
-  console.log(`Game deadline: ${gameDeadline.toUTCString()}\n`);
+  console.log(`Game deadline  : ${gameDeadline.toUTCString()}`);
+  console.log(`REST API       : http://localhost:${PORT}/api\n`);
 });
