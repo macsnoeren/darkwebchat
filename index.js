@@ -212,6 +212,16 @@ function saveMessage(chatId, msg) {
   ).run(chatId, msg.timestamp, msg.who, msg.chat, msg.company);
 }
 
+function resolveOtherSuggestions(chatId) {
+  const pending = db.prepare("SELECT id FROM ai_suggestions WHERE chatId = ? AND status = 'pending'").all(chatId);
+  if (pending.length > 0) {
+    db.prepare("UPDATE ai_suggestions SET status = 'obsolete' WHERE chatId = ? AND status = 'pending'").run(chatId);
+    pending.forEach((s) => {
+      broadcastToHackers("admin-suggestion-resolved", { id: s.id, status: "obsolete" });
+    });
+  }
+}
+
 function validateApiKey(req) {
   const key = req.headers["x-api-token"] || req.query.token || "";
   return !!db.prepare("SELECT key_value FROM api_keys WHERE key_value = ?").get(key);
@@ -310,6 +320,7 @@ app.post("/api", (req, res) => {
       companieData[chatId].chat.push(msg);
       io.to(chatId).emit("chat-message-darknet", msg);
       broadcastToHackers("update-chat", { chatId, msg });
+      resolveOtherSuggestions(chatId);
       db.prepare(
         "INSERT INTO ai_suggestions (chatId, agent_id, message, level_up, timestamp, status) VALUES (?, ?, ?, ?, ?, 'auto-sent')"
       ).run(chatId, agentId, cleanMessage, levelUp, ts);
@@ -526,6 +537,7 @@ io.on("connection", (socket) => {
     companieData[chatId].chat.push(msg);
     io.to(chatId).emit("chat-message-darknet", msg);
     broadcastToHackers("update-chat", { chatId, msg });
+    resolveOtherSuggestions(chatId);
   });
 
   // ── HACKER: delete chat ──────────────────────────────────
@@ -536,6 +548,7 @@ io.on("connection", (socket) => {
     console.log(`[-] Chat verwijderd: ${companieData[chatId].company} / ${companieData[chatId].teamName}`);
     delete companieData[chatId];
     broadcastToHackers("chat-deleted", { chatId });
+    resolveOtherSuggestions(chatId);
   });
 
   // ── HACKER: gebruik AI-suggestie als bericht ─────────────
@@ -563,6 +576,7 @@ io.on("connection", (socket) => {
 
     db.prepare("UPDATE ai_suggestions SET status = 'used' WHERE id = ?").run(id);
     broadcastToHackers("admin-suggestion-resolved", { id, status: "used" });
+    resolveOtherSuggestions(chatId);
     console.log(`[AI] Suggestie #${id} gebruikt door operator`);
   });
 
