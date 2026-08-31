@@ -11,14 +11,18 @@ const server = createServer(app);
 const io     = new Server(server);
 
 process.env.TZ = "UTC";
-app.use(express.static("www"));
+app.use(express.static(path.join(__dirname, "www")));
 app.use(express.json());
 
 // ============================================================
 // DATABASE SETUP
 // ============================================================
 
-const db = new Database(path.join(__dirname, "game.db"));
+// Waar de database landt. In een container hoort dit een gemount volume te
+// zijn: staat het bestand in de image-laag, dan neemt elke update alle tokens,
+// operators en gespreksgeschiedenis mee het graf in.
+const DB_FILE = process.env.DB_FILE || path.join(__dirname, "game.db");
+const db = new Database(DB_FILE);
 
 // Migration: voeg auto_reply kolom toe aan sessions als die nog niet bestaat
 const pragmaSessions0 = db.prepare("PRAGMA table_info(sessions)").all();
@@ -123,8 +127,25 @@ if (userCount.n === 0) {
 // GAME CONFIGURATION
 // ============================================================
 
-const gameDeadline        = new Date(Date.now() + 4 * 60 * 60 * 1000);
-const gameDurationSeconds = 4 * 60 * 60;
+// GAME_DURATION_HOURS bepaalt hoe lang de oefening duurt.
+// GAME_DEADLINE is een absoluut ISO-tijdstip (bijv. "2026-10-30T16:00:00Z").
+// Zonder GAME_DEADLINE telt de klok vanaf het opstarten van dit proces af, en
+// dan verspringt de deadline dus bij elke herstart van de container.
+const gameDurationHours = Number(process.env.GAME_DURATION_HOURS || 4);
+if (!Number.isFinite(gameDurationHours) || gameDurationHours <= 0) {
+  console.error(`GAME_DURATION_HOURS is geen positief getal: "${process.env.GAME_DURATION_HOURS}"`);
+  process.exit(1);
+}
+
+const gameDurationSeconds = Math.round(gameDurationHours * 3600);
+const gameDeadline        = process.env.GAME_DEADLINE
+  ? new Date(process.env.GAME_DEADLINE)
+  : new Date(Date.now() + gameDurationSeconds * 1000);
+
+if (Number.isNaN(gameDeadline.getTime())) {
+  console.error(`GAME_DEADLINE is geen geldige datum: "${process.env.GAME_DEADLINE}"`);
+  process.exit(1);
+}
 
 // ============================================================
 // RUNTIME STATE
@@ -789,5 +810,6 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`\nDarkWebChat draait op poort ${PORT}`);
   console.log(`Game deadline  : ${gameDeadline.toUTCString()}`);
-  console.log(`REST API       : http://localhost:${PORT}/api\n`);
+  console.log(`REST API       : http://localhost:${PORT}/api`);
+  console.log(`Database       : ${DB_FILE}\n`);
 });

@@ -7,12 +7,66 @@
 
 import requests
 import json
+import os
+import signal
+import sys
 import time
 import re
 import logging
 import uuid
 from typing import List, Dict, Optional, Any
-from config import API_KEY, BASE_URL, OLLAMA_URL, LLM_MODELS, POLL_INTERVAL
+
+# ============================================================
+# CONFIGURATIE
+# ============================================================
+#
+# Twee bronnen, in deze volgorde: een environment variable wint, anders komt de
+# waarde uit bin/config.py. Die volgorde is er voor de container — die krijgt
+# alles via de environment en heeft geen config.py — terwijl een checkout op een
+# laptop met bin/config.py blijft werken zoals hij deed.
+
+try:
+    import config as _config
+except ImportError:
+    _config = None
+
+
+def _setting(name, default=None, required=False):
+    # <NAME>_FILE first, so a secret can be mounted as a file instead of standing
+    # in compose.yml where it would be committed. Same convention as the
+    # postgres images and docker secrets.
+    path = os.environ.get(f"{name}_FILE")
+    if path:
+        try:
+            return open(path).read().strip()
+        except OSError as exc:
+            raise SystemExit(f"{name}_FILE={path} is niet te lezen: {exc}")
+
+    value = os.environ.get(name)
+    if value is None and _config is not None:
+        value = getattr(_config, name, None)
+    if value is None:
+        value = default
+    if required and not value:
+        raise SystemExit(
+            f"{name} is niet gezet. Zet de environment variable, of vul hem in "
+            f"in bin/config.py (zie bin/config.py.sample)."
+        )
+    return value
+
+
+API_KEY    = _setting("API_KEY", required=True)
+BASE_URL   = _setting("BASE_URL",   "http://localhost:3000/api")
+OLLAMA_URL = _setting("OLLAMA_URL", "http://localhost:11434/api/generate")
+
+# Komma-gescheiden in de environment, een lijst in config.py.
+_models = _setting("LLM_MODELS", "qwen2.5:1.5b")
+LLM_MODELS = (
+    [m.strip() for m in _models.split(",") if m.strip()]
+    if isinstance(_models, str) else list(_models)
+)
+
+POLL_INTERVAL = int(_setting("POLL_INTERVAL", 30))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -187,6 +241,12 @@ Geef ALLEEN dit JSON object terug. Geen tekst ervoor of erna.
                 "team_id":  chat_id,
                 "message":  message,
                 "level_up": False,
+                # De server slaat dit op in ai_suggestions.agent_id en toont het
+                # in het dashboard. Zonder dit veld valt hij terug op "unknown"
+                # en is niet meer te zien welke agent of welk model een
+                # suggestie heeft geschreven — precies wat je wilt weten als er
+                # meerdere modellen tegelijk meedraaien.
+                "agent_id": self.agent_id,
             }
             resp = requests.post(
                 f"{self.base_url}?action=send_suggestion&token={self.api_key}",
@@ -272,6 +332,18 @@ Geef ALLEEN dit JSON object terug. Geen tekst ervoor of erna.
 
 if __name__ == "__main__":
     service = DarkNetNegotiator()
+
+    # 'docker stop' stuurt SIGTERM, en zonder handler stopt Python zonder zich
+    # af te melden. De server ruimt een agent na 90 seconden zelf op, maar tot
+    # die tijd staat er een spook in het dashboard — verwarrend precies op het
+    # moment dat je containers aan het herstarten bent.
+    def _terminate(signum, frame):
+        logger.info("SIGTERM ontvangen, afmelden en stoppen.")
+        service.unregister_agent()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _terminate)
+
     try:
         service.run()
     except KeyboardInterrupt:

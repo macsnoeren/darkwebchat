@@ -1,21 +1,26 @@
 # config.py
 
 # API-sleutel voor de webapplicatie
-API_KEY = "ee1444aefcc8711d5ef00465fc4b3bc1ea6b6e29f977a554cd4c45f7f1b7cc5e"
+# Create one in the dashboard under the API tab, then paste it here.
+API_KEY = "paste-an-api-key-from-the-dashboard-here"
 
-# URL van de webapplicatie API
-BASE_URL = "https://test.jmnl.nl/api/index.php"
+# URL van de webapplicatie API. Dit is het /api endpoint van index.js;
+# in een container is dat de servicenaam, bijv. http://darkwebchat:3000/api
+BASE_URL = "http://localhost:3000/api"
 
 # URL van de Ollama API
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 # Lijst met LLM-modellen die gebruikt worden voor de beoordeling
+# Elk model in deze lijst draait voor ELKE openstaande onderhandeling, en stuurt
+# een eigen suggestie. Op CPU telt dat hard aan: vier modellen is vier keer de
+# wachttijd voordat de operator iets ziet.
+#
+# "…-cloud" modellen draaien op de machines van Ollama, niet op de jouwe. Op een
+# node zonder uitgaand internet werken ze niet, en dat is opzet — zie
+# dockers/ai/README.md.
 LLM_MODELS = [
-    "qwen3:4b",
-    "qwen3:30b",
-    "gemma3:1b",
-    "gemma3:4b",
-    "gpt-oss:120b-cloud",
+    "qwen2.5:1.5b",
 ]
 
 # Interval in seconden voor het ophalen van nieuwe antwoorden

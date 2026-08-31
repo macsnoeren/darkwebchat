@@ -130,3 +130,9 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# De speeldatabase hoort op een volume, niet in git.
+game.db
+game.db-journal
+game.db-wal
+game.db-shm

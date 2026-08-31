@@ -1,0 +1,2 @@
+# Pinned, so the same commit builds the same image tomorrow.
+requests==2.32.3
