@@ -151,7 +151,13 @@ class DarkNetNegotiator:
                 timeout=30,
             )
             if response.status_code == 401:
-                logger.error("Authenticatie mislukt. Controleer API_KEY in config.py.")
+                # Niet naar config.py verwijzen: in een container bestaat dat
+                # bestand niet en komt de sleutel uit API_KEY_FILE of API_KEY.
+                logger.error(
+                    "Authenticatie mislukt: de server kent deze API_KEY niet. "
+                    "Maak er een aan in het dashboard onder API en zet die in "
+                    "API_KEY_FILE, API_KEY of bin/config.py."
+                )
                 return []
             response.raise_for_status()
             tasks = response.json()
