@@ -26,7 +26,10 @@ WORKDIR /app
 COPY bin/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bin/process_ai_feedback.py ./
+# Twee bestanden: process_ai_feedback.py is de lus en de API, negotiator.py is
+# wat er gezegd wordt. Ze zijn gesplitst zodat de onderhandelaar te testen is
+# zonder server, en ze horen allebei in de image.
+COPY bin/process_ai_feedback.py bin/negotiator.py ./
 
 # config.py is deliberately absent — it is gitignored and .dockerignore keeps a
 # developer's local copy out of the image. Everything is configured through the

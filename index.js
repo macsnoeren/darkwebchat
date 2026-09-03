@@ -92,7 +92,25 @@ db.exec(`
     timestamp  TEXT NOT NULL,
     status     TEXT NOT NULL DEFAULT 'pending'
   );
+
+  -- Het geheugen van de onderhandeling: vraagprijs, of er een akkoord ligt, en
+  -- een samenvatting van wat er gezegd is. De agent stuurt het hele gesprek dus
+  -- niet elke beurt opnieuw door een model heen.
+  CREATE TABLE IF NOT EXISTS negotiation_state (
+    chatId     TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL,
+    updatedAt  TEXT NOT NULL
+  );
 `);
+
+// Migration: suggesties dragen sinds deze versie de voorgestelde staat en een
+// waarschuwing met zich mee.
+const pragmaSuggestions = db.prepare("PRAGMA table_info(ai_suggestions)").all();
+if (pragmaSuggestions.length > 0 && !pragmaSuggestions.some((c) => c.name === "state_json")) {
+  db.exec(`ALTER TABLE ai_suggestions ADD COLUMN state_json TEXT`);
+  db.exec(`ALTER TABLE ai_suggestions ADD COLUMN warning TEXT NOT NULL DEFAULT ''`);
+  console.log("Migratie: state_json en warning toegevoegd aan ai_suggestions.");
+}
 
 // Seed default tokens als de tabel leeg is
 const tokenCount = db.prepare("SELECT COUNT(*) AS n FROM tokens").get();
@@ -248,6 +266,42 @@ function validateApiKey(req) {
   return !!db.prepare("SELECT key_value FROM api_keys WHERE key_value = ?").get(key);
 }
 
+// De onderhandelingsstaat hoort bij het bericht dat daadwerkelijk verstuurd is.
+// Er draaien meerdere modellen per chat en elk stuurt een eigen suggestie mét
+// een eigen samenvatting; die van een weggeklikte suggestie mag het geheugen
+// niet worden. Vandaar dat promoveren pas gebeurt bij gebruiken of auto-sturen.
+function promoteState(chatId, stateJson) {
+  if (!stateJson) return;
+  db.prepare(
+    "INSERT INTO negotiation_state (chatId, state_json, updatedAt) VALUES (?, ?, ?) " +
+    "ON CONFLICT(chatId) DO UPDATE SET state_json = excluded.state_json, updatedAt = excluded.updatedAt"
+  ).run(chatId, stateJson, getTimeStamp());
+}
+
+function loadState(chatId) {
+  const row = db.prepare("SELECT state_json FROM negotiation_state WHERE chatId = ?").get(chatId);
+  if (!row) return null;
+  try {
+    return JSON.parse(row.state_json);
+  } catch {
+    return null;
+  }
+}
+
+// De berichten los, naast het platte transcript. Dat transcript heeft geen
+// betrouwbare scheiding tussen afzender en inhoud: typt een bedrijf zelf
+// "[21:10] DarkNet Operator: …", dan staat dat er als een bericht van de
+// hacker. Als losse velden is die verwarring onmogelijk.
+function chatMessages(chatId) {
+  const data = companieData[chatId];
+  if (!data) return [];
+  return data.chat.map((m) => ({
+    who:       m.who === "darknet" ? "darknet" : "company",
+    timestamp: m.timestamp,
+    text:      m.chat,
+  }));
+}
+
 function formatChatHistory(chatId) {
   const data = companieData[chatId];
   if (!data) return "";
@@ -285,6 +339,11 @@ app.get("/api", (req, res) => {
         team_name:    data.teamName || data.company,
         company:      data.company,
         chat_history: formatChatHistory(chatId),
+        messages:     chatMessages(chatId),
+        state:        loadState(chatId),
+        // De tijdsdruk komt uit de klok van de oefening in plaats van uit iets
+        // dat het model verzint, zodat "voor 23:00" ook echt klopt.
+        deadline:     gameDeadline.toISOString(),
       }));
 
     return res.json(tasks);
@@ -330,6 +389,11 @@ app.post("/api", (req, res) => {
     const ts = getTimeStamp();
     const cleanMessage = message.replace(/^[\s\S]*?🤖[^\n]*\n+/, "").trim() || message.trim();
 
+    // De agent stelt een bijgewerkte staat voor. Opslaan doen we hem hier nog
+    // niet — dat gebeurt pas als dit bericht ook echt verstuurd wordt.
+    const stateJson = body.state ? JSON.stringify(body.state) : null;
+    const warning   = String(body.warning || "").slice(0, 300);
+
     // Claim vrijgeven na suggestie
     delete claims[chatId];
 
@@ -342,17 +406,19 @@ app.post("/api", (req, res) => {
       io.to(chatId).emit("chat-message-darknet", msg);
       broadcastToHackers("update-chat", { chatId, msg });
       resolveOtherSuggestions(chatId);
+      promoteState(chatId, stateJson);
       db.prepare(
-        "INSERT INTO ai_suggestions (chatId, agent_id, message, level_up, timestamp, status) VALUES (?, ?, ?, ?, ?, 'auto-sent')"
-      ).run(chatId, agentId, cleanMessage, levelUp, ts);
+        "INSERT INTO ai_suggestions (chatId, agent_id, message, level_up, timestamp, status, state_json, warning) VALUES (?, ?, ?, ?, ?, 'auto-sent', ?, ?)"
+      ).run(chatId, agentId, cleanMessage, levelUp, ts, stateJson, warning);
+      if (warning) console.log(`[AI] ${warning} (chat ${chatId})`);
       console.log(`[AI] Auto-reply verstuurd voor chat ${chatId} via ${agentId}`);
       return res.json({ ok: true, auto_sent: true });
     }
 
     // Handmatige modus: sla op als suggestie voor de operator
     const result = db.prepare(
-      "INSERT INTO ai_suggestions (chatId, agent_id, message, level_up, timestamp, status) VALUES (?, ?, ?, ?, ?, 'pending')"
-    ).run(chatId, agentId, cleanMessage, levelUp, ts);
+      "INSERT INTO ai_suggestions (chatId, agent_id, message, level_up, timestamp, status, state_json, warning) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)"
+    ).run(chatId, agentId, cleanMessage, levelUp, ts, stateJson, warning);
 
     const suggestion = {
       id:        result.lastInsertRowid,
@@ -363,9 +429,11 @@ app.post("/api", (req, res) => {
       timestamp: ts,
       company:   companieData[chatId].company,
       teamName:  companieData[chatId].teamName,
+      warning,
     };
 
     broadcastToHackers("admin-ai-suggestion", suggestion);
+    if (warning) console.log(`[AI] ${warning} (chat ${chatId})`);
     console.log(`[AI] Suggestie ontvangen van ${agentId} voor chat ${chatId}`);
 
     return res.json({ ok: true, id: result.lastInsertRowid });
@@ -539,6 +607,7 @@ io.on("connection", (socket) => {
           timestamp: s.timestamp,
           company:   cd ? cd.company  : "?",
           teamName:  cd ? cd.teamName : "?",
+          warning:   s.warning || "",
         });
       });
     }
@@ -594,6 +663,11 @@ io.on("connection", (socket) => {
     companieData[chatId].chat.push(msg);
     io.to(chatId).emit("chat-message-darknet", msg);
     broadcastToHackers("update-chat", { chatId, msg });
+
+    // Dit bericht ís nu het gesprek, dus de samenvatting die eraan hangt wordt
+    // het geheugen. De samenvattingen van de suggesties die de operator naast
+    // zich neerlegt verdwijnen met die suggesties.
+    promoteState(chatId, suggestion.state_json);
 
     db.prepare("UPDATE ai_suggestions SET status = 'used' WHERE id = ?").run(id);
     broadcastToHackers("admin-suggestion-resolved", { id, status: "used" });

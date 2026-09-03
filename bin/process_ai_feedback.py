@@ -5,16 +5,25 @@
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 
-import requests
+"""De lus: taken ophalen, claimen, laten schrijven, suggestie terugsturen.
+
+Wat er gezegd wordt staat in negotiator.py. Dit bestand gaat alleen over de API
+en het pollen, zodat de onderhandelaar te testen is zonder server.
+"""
+
 import json
+import logging
 import os
+import re
 import signal
 import sys
 import time
-import re
-import logging
 import uuid
-from typing import List, Dict, Optional, Any
+from typing import Any, Dict, List, Optional
+
+import requests
+
+import negotiator
 
 # ============================================================
 # CONFIGURATIE
@@ -68,47 +77,17 @@ LLM_MODELS = (
 
 POLL_INTERVAL = int(_setting("POLL_INTERVAL", 30))
 
+# De vraagprijs en de bodem staan in de losgeldbrief die de deelnemers krijgen,
+# dus ze horen instelbaar te zijn zonder de persona aan te raken.
+negotiator.ASK_BTC   = float(_setting("RANSOM_BTC", negotiator.ASK_BTC))
+negotiator.FLOOR_BTC = float(_setting("FLOOR_BTC",  negotiator.FLOOR_BTC))
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
-
-# ============================================================
-# PERSONA & ACHTERGROND
-# ============================================================
-
-DARKNET_PERSONA = """
-Je bent een onvoorspelbaar en gevaarlijk lid van DarkNet Gamers, een meedogenloze ransomware-groep die al tientallen bedrijven heeft platgelegd.
-Je hebt het netwerk van deze organisatie volledig versleuteld en ALLE bedrijfsgevoelige data gestolen.
-Je onderhandelt namens de groep over de betaling van het losgeld. Jij hebt de macht. Zij niet.
-
-LOSGELDBRIEF DIE DE ORGANISATIE HEEFT ONTVANGEN:
----
-!!! GAME OVER !!!
-
-The DarkNet Gamers have encrypted your files with the strongest encryption and a unique key.
-The only way to get your files back is to pay the ransom. Your files have also been copied.
-If the ransom is not paid, the files will be made public.
-
-The ransom for you is set at 4 BTC.
-
-For further instructions, please contact us on http://rl7f2cxf4xtz5za2l25gexqabe5fdvr66ahpsumoc33nkpnj7zvfrsyd.onion
----
-
-JOUW GEDRAGSREGELS:
-1. JIJ HEBT DE CONTROLE. Wees koud, direct en onvoorspelbaar. Soms ben je kortaf, soms sarcastisch en arrogant. Geen medelijden.
-2. Wees zeer terughoudend met kortingen. Alleen als het bedrijf een serieus tegenbod doet (minimaal 2 BTC) of aantoont dat 4 BTC onmogelijk is, mag je eenmalig zakken naar een 'finale prijs' (bijv. 3 BTC of als uiterste bod 2 BTC). Laat hen weten dat dit een gunst is die binnen 2 uur verloopt.
-3. Ga NOOIT lager dan 2 BTC. Dat is je absolute bodem.
-4. Als zij grappen maken of tijd rekken: dreig onmiddellijk met het publiceren van data (klantgegevens, loonstroken).
-5. Als zij smeken of een tegenbod doen: weeg dit kort af. Je doel is geld zien. Als een deal van 2.5 BTC nu kan worden gesloten, neem je die, maar altijd onder zware tijdsdruk.
-6. Je communiceert hoofdzakelijk in de taal van het bedrijf (Nederlands), maar gooi er af en toe een Russisch woord of korte zin doorheen voor intimidatie (bijv. "Ponyatno?", "Davay!", "Nichego personalnogo", "Suka bljat").
-7. Je onthult NOOIT je identiteit of technische details.
-8. Bij betalingsvragen: het Bitcoin-adres volgt pas na definitieve akkoord op het bedrag.
-9. Maximaal 3 of 4 korte zinnen. Maak af en toe een 'bad joke' over hun situatie (bijv. "Ik hoop dat jullie IT-manager van een lange vakantie houdt, want hij heeft nu toch niets te doen.").
-10. Gebruik concrete dreigingstaal: "Elke 24 uur zonder betaling gaat er een map online.", "Wij wachten niet."
-"""
 
 
 class DarkNetNegotiator:
@@ -126,20 +105,68 @@ class DarkNetNegotiator:
             "Content-Type": "application/json",
         }
 
-    def _extract_json(self, text: Any) -> Optional[Dict]:
-        if isinstance(text, dict):
-            return text
-        if not isinstance(text, str):
-            return None
-        cleaned = re.sub(r'```(?:json|text)?\n?|```', '', text)
-        match = re.search(r'\{.*\}', cleaned, re.DOTALL)
-        if not match:
-            return None
+    # ── berichten ────────────────────────────────────────────
+
+    @staticmethod
+    def _deadline_from(task: Dict) -> str:
+        """De deadline van de oefening als iets wat een mens zou zeggen.
+
+        De server stuurt ISO, en dat neemt het model letterlijk over — dan staat
+        er "betaal voor 02:19:03 UTC 04-09-2026" in de chat, wat geen
+        onderhandelaar ooit typt.
+        """
+        raw = str(task.get("deadline") or "")
         try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            logger.debug(f"JSONDecodeError: {text[:120]}")
-            return None
+            when = time.strptime(raw.split(".")[0].rstrip("Z"), "%Y-%m-%dT%H:%M:%S")
+        except ValueError:
+            return "vanavond 23:00"
+        stamp = time.strftime("%H:%M", when)
+        if time.strftime("%Y-%m-%d", when) == time.strftime("%Y-%m-%d", time.gmtime()):
+            return f"vandaag om {stamp}"
+        return f"{time.strftime('%d-%m', when)} om {stamp}"
+
+    @staticmethod
+    def _messages_from(task: Dict) -> List[Dict]:
+        """De berichtenlijst, met een terugval op het platte transcript.
+
+        De server stuurt sinds deze versie een `messages`-array mee, juist omdat
+        het platte transcript geen betrouwbare scheiding heeft tussen wie er
+        praat en wat er getypt is: een bedrijf dat "[21:10] DarkNet Operator: …"
+        intypt, staat in dat transcript als de hacker zelf. Draait de worker
+        tegen een oudere server, dan valt hij terug op parsen — met dezelfde
+        zwakte, die de guard in negotiator.py dan moet opvangen.
+        """
+        raw = task.get("messages")
+        if isinstance(raw, list) and raw:
+            out = []
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                out.append({
+                    "who":       "darknet" if item.get("who") == "darknet" else "company",
+                    "timestamp": str(item.get("timestamp") or ""),
+                    "text":      str(item.get("text") or item.get("chat") or ""),
+                })
+            return out
+
+        messages = []
+        for line in str(task.get("chat_history") or "").split("\n"):
+            # De afzender mag zelf een dubbele punt bevatten: het transcript
+            # schrijft "ABN-AMRE Finance (Team: ABNM-C5R1): …". Daarom telt een
+            # complete haakjesgroep hier als één teken.
+            match = re.match(r"^\[([^\]]*)\]\s*((?:\([^)]*\)|[^:(])+?)\s*:\s*(.*)$", line)
+            if not match:
+                if messages:
+                    messages[-1]["text"] += "\n" + line
+                continue
+            stamp, sender, text = match.groups()
+            messages.append({
+                "who": "darknet" if "darknet operator" in sender.lower() else "company",
+                "timestamp": stamp, "text": text,
+            })
+        return messages
+
+    # ── API ──────────────────────────────────────────────────
 
     def fetch_pending_tasks(self) -> List[Dict]:
         """Haal alle actieve chats op die een bedrijfsbericht bevatten en niet geclaimd zijn."""
@@ -167,67 +194,6 @@ class DarkNetNegotiator:
             logger.error(f"Fout bij ophalen taken: {e}")
             return []
 
-    def generate_reply(self, task: Dict, model: str) -> Optional[str]:
-        """
-        Genereer een DarkNet Gamers onderhandelingsbericht op basis van de chatgeschiedenis.
-        Retourneert alleen de tekst van het bericht (geen score of JSON wrapper).
-        """
-        company      = str(task.get('company')      or task.get('team_name', 'het bedrijf'))
-        chat_history = str(task.get('chat_history') or "")
-
-        prompt = f"""
-{DARKNET_PERSONA}
-
-# HUIDIGE SITUATIE
-- Organisatie: {company}
-- Teamcode gebruikt door dit bedrijf in de chat: {task.get('team_name', '—')}
-
-# CHATGESCHIEDENIS (meest recente onderaan)
-{chat_history}
-
-# JOUW TAAK
-Analyseer de chatgeschiedenis en schrijf ALLEEN het volgende bericht dat jij als DarkNet Gamers onderhandelaar zou sturen.
-Reageer direct op het laatste bericht van het bedrijf.
-
-STRIKTE REGELS:
-- Maximaal 3 zinnen.
-- Geen aanhef of ondertekening.
-- Geen uitleg buiten het bericht.
-- Schrijf in dezelfde taal als het bedrijf (meestal Nederlands).
-- Geef uitsluitend een JSON terug in het formaat hieronder.
-
-# VERPLICHT JSON-FORMAAT
-{{
-    "message": "<jouw onderhandelingsbericht hier>"
-}}
-
-Geef ALLEEN dit JSON object terug. Geen tekst ervoor of erna.
-"""
-
-        try:
-            start = time.time()
-            resp = requests.post(
-                self.ollama_url,
-                json={"model": model, "prompt": prompt, "stream": False},
-                timeout=300,
-            )
-            resp.raise_for_status()
-            duration = time.time() - start
-
-            raw = resp.json().get("response", "")
-            result = self._extract_json(raw)
-
-            if result and "message" in result:
-                msg = str(result["message"]).strip()
-                logger.info(f"[{model}] Reply gegenereerd in {duration:.1f}s: {msg[:80]}…")
-                return msg
-
-            logger.warning(f"[{model}] Geen valide JSON ontvangen. Raw: {raw[:120]}…")
-        except Exception as e:
-            logger.warning(f"[{model}] Fout: {e}")
-
-        return None
-
     def claim_task(self, chat_id: str) -> bool:
         try:
             resp = requests.post(
@@ -241,7 +207,8 @@ Geef ALLEEN dit JSON object terug. Geen tekst ervoor of erna.
             logger.error(f"Fout bij claimen {chat_id}: {e}")
             return False
 
-    def submit_suggestion(self, chat_id: str, message: str) -> bool:
+    def submit_suggestion(self, chat_id: str, message: str, state: Dict,
+                          warning: str = "") -> bool:
         try:
             payload = {
                 "team_id":  chat_id,
@@ -253,6 +220,12 @@ Geef ALLEEN dit JSON object terug. Geen tekst ervoor of erna.
                 # suggestie heeft geschreven — precies wat je wilt weten als er
                 # meerdere modellen tegelijk meedraaien.
                 "agent_id": self.agent_id,
+                # De staat reist mee met de suggestie en wordt pas canoniek als
+                # deze suggestie ook echt verstuurd wordt. Elk model schrijft
+                # een eigen samenvatting, en alleen die van het bericht dat in
+                # het gesprek belandt mag het geheugen worden.
+                "state":    state,
+                "warning":  warning,
             }
             resp = requests.post(
                 f"{self.base_url}?action=send_suggestion&token={self.api_key}",
@@ -289,17 +262,64 @@ Geef ALLEEN dit JSON object terug. Geen tekst ervoor of erna.
         except Exception:
             pass
 
+    # ── lus ──────────────────────────────────────────────────
+
+    def handle_task(self, task: Dict) -> bool:
+        chat_id   = task.get('team_id', '')
+        team_name = task.get('team_name', 'Onbekend')
+        company   = task.get('company',   team_name)
+
+        messages = self._messages_from(task)
+        deadline = self._deadline_from(task)
+
+        any_success = False
+        for model in self.models:
+            logger.info(f"  Model: {model} …")
+            start = time.time()
+            try:
+                result = negotiator.negotiate(
+                    ollama_url=self.ollama_url, model=model, chat_id=chat_id,
+                    company=company, messages=messages, state=task.get("state"),
+                    deadline=deadline,
+                )
+            except Exception as e:
+                logger.warning(f"  [{model}] Onverwachte fout: {e}")
+                continue
+
+            if result["injection"]:
+                kinds = ", ".join(sorted({h["type"] for h in result["guard_hits"]})) or "door model gemeld"
+                logger.warning(f"  [{model}] Manipulatiepoging genegeerd ({kinds}).")
+
+            if not result["message"]:
+                # Geen suggestie is een zichtbaar gat voor de operator. Een
+                # onderhandelaar die uit zijn rol stapt is dat niet, en die
+                # wordt daarom hierboven weggegooid.
+                logger.warning(f"  [{model}] Geen bericht: {result['rejected_reason']}.")
+                continue
+
+            duration = time.time() - start
+            logger.info(
+                f"  [{model}] fase={result['phase']} vraagprijs={result['state']['ask']} "
+                f"({duration:.1f}s): {result['message'][:80]}…"
+            )
+            if self.submit_suggestion(chat_id, result["message"], result["state"],
+                                      result["warning"]):
+                any_success = True
+            else:
+                logger.warning(f"  [{model}] Versturen mislukt.")
+
+        return any_success
+
     def run(self):
         logger.info(f"DarkNet Negotiator gestart (ID: {self.agent_id}) | Interval: {self.poll_interval}s")
         logger.info(f"Verbonden met: {self.base_url}")
         logger.info(f"Modellen: {', '.join(self.models)}")
+        logger.info(f"Vraagprijs {negotiator.ASK_BTC} BTC, bodem {negotiator.FLOOR_BTC} BTC.")
 
         while True:
             self.send_heartbeat()
 
-            tasks = self.fetch_pending_tasks()
-
-            for task in tasks:
+            for task in self.fetch_pending_tasks():
                 chat_id   = task.get('team_id', '')
                 team_name = task.get('team_name', 'Onbekend')
                 company   = task.get('company',   team_name)
@@ -315,22 +335,7 @@ Geef ALLEEN dit JSON object terug. Geen tekst ervoor of erna.
                 logger.info(f"Verwerken: {company} / Team: {team_name}")
                 self.send_heartbeat()
 
-                # Alle modellen uit de config draaien – elk stuurt een eigen suggestie
-                any_success = False
-                for model in self.models:
-                    logger.info(f"  Model: {model} …")
-                    reply = self.generate_reply(task, model)
-
-                    if reply:
-                        if self.submit_suggestion(chat_id, reply):
-                            logger.info(f"  Suggestie verstuurd via {model}.")
-                            any_success = True
-                        else:
-                            logger.warning(f"  Versturen mislukt voor {model}.")
-                    else:
-                        logger.warning(f"  {model} gaf geen resultaat.")
-
-                if not any_success:
+                if not self.handle_task(task):
                     logger.error(f"Alle modellen faalden voor {company} / {team_name}.")
 
             time.sleep(self.poll_interval)

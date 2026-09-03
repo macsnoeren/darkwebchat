@@ -623,6 +623,16 @@ if (isDashboard) {
     if (!panel) return;
 
     if (agentEl) agentEl.textContent = s.agentId + " \u2502 " + s.timestamp;
+
+    // Het bedrijf probeerde de onderhandelaar te manipuleren in plaats van te
+    // onderhandelen. De suggestie is niet geblokkeerd \u2014 de operator moet hem
+    // alleen even kritisch lezen voordat hij hem doorstuurt.
+    var warnEl = document.getElementById("suggestion-warning");
+    if (warnEl) {
+      warnEl.textContent   = s.warning ? "\u26a0 " + s.warning : "";
+      warnEl.style.display = s.warning ? "block" : "none";
+    }
+
     // Strip oude model-header regel zodat preview overeenkomt met wat er verstuurd wordt
     var displayMsg = s.message.replace(/^[\s\S]*?🤖[^\n]*\n+/, "").trim() || s.message.trim();
     if (textEl)  textEl.textContent  = displayMsg;

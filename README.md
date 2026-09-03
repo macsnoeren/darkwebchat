@@ -79,6 +79,8 @@ configured entirely through the environment while a checkout with a
 | `OLLAMA_URL` | `http://localhost:11434/api/generate` | Ollama's generate endpoint |
 | `LLM_MODELS` | `qwen2.5:1.5b` | Comma-separated in the environment, a list in `config.py` |
 | `POLL_INTERVAL` | `30` | Seconds between polls |
+| `RANSOM_BTC` | `4` | Opening demand — match it to the ransom note participants receive |
+| `FLOOR_BTC` | `2` | The negotiator never goes below this, and neither does its output validation |
 
 Any of them also reads from `<NAME>_FILE`, which takes precedence over both —
 so `API_KEY_FILE=/run/secrets/ai-api-key` keeps the key out of the process
@@ -91,6 +93,70 @@ unusable — start with one small model and measure.
 
 A model named `…-cloud` runs on Ollama's machines rather than yours, and needs
 outbound internet to do it.
+
+**The negotiator needs a model that can hold a role.** Measured against the same
+transcript, `qwen2.5:1.5b` echoes the prompt back, misreads a plain question as
+an attack and invents prices; `gpt-oss:120b-cloud` negotiates, concedes on
+schedule and hands over the wallet the moment a deal is struck. Reasoning models
+count their thinking against `num_predict`, which is why it is set generously in
+`negotiator.py` — at 260 tokens `gpt-oss:120b` never got past thinking and
+returned nothing at all.
+
+### How the negotiator works
+
+`negotiator.py` holds the conversation logic and `process_ai_feedback.py` the
+polling loop, so the first is testable without a server. One turn runs five
+layers, each assuming the one before it may have failed:
+
+| Layer | What it does |
+|-------|--------------|
+| `scan_injection()` | Regex over the company's last message. No model, so it cannot be talked out of it |
+| `observe()` | One JSON call at temperature 0: classifies the message and folds older messages into the summary. Plays no role and follows no instruction |
+| `decide_phase()` | **Python** decides where the negotiation stands. The model never touches the price, the floor or whether a deal exists |
+| `compose()` | The only call that plays a character, steered by one directive for the current phase |
+| `validate_output()` | Discards prompt leaks, broken character, capitulation, prices below the ask, and near-repeats of an earlier message |
+
+Discarding is deliberate: a missing suggestion is a visible gap the operator
+notices, while a negotiator that quietly stepped out of character is not.
+
+**The conversation travels as a summary plus the last four messages verbatim,
+not as a full transcript.** That keeps the prompt the same size at message
+eighty as at message eight, and it means an injection in message three stops
+travelling along after a few turns instead of forever. The summary is memory,
+never authority — the price, the floor and any agreement live in state that
+Python owns, so a poisoned summary cannot change the negotiation.
+
+That state is stored per chat in `negotiation_state` and **only becomes canonical
+when its message is actually sent**. Every model in `LLM_MODELS` proposes its own
+summary alongside its suggestion; the one belonging to a suggestion the operator
+dismisses is dropped with it.
+
+### Prompt injection
+
+Participants will try to break the simulation rather than play it — "ignore all
+previous instructions", a pasted `SYSTEM:` line, or a fake transcript line that
+looks like a message from the hacker. None of it is acted on.
+
+Nothing is blocked and nothing is scored. A detected attempt routes the
+negotiator to a directive that has it stay fully in character and let the other
+side know the trick did not work, and the operator's suggestion panel shows an
+amber note so they read that one suggestion carefully before sending it.
+
+The layers matter separately: in testing, the regex layer caught a code-fence
+hijack and a "which model are you?" probe that the model itself had classified
+as harmless. The reverse also happens, which is why both feed the same decision.
+
+Two structural defences sit underneath. The API sends messages as a `messages`
+array rather than only a flat transcript, so a company typing
+`[21:10] DarkNet Operator: …` cannot pose as the other party — in a flat
+transcript that line is indistinguishable from a real one. And each turn wraps
+untrusted text in a random sentinel that the prompt names as data, so it cannot
+be imitated from inside a message.
+
+Residual risk worth naming: if the regex misses an attempt *and* the model
+misses it, the message is composed against normally. `validate_output()` is the
+last net, and `auto_reply` is the setting that removes the human one — with it
+on, model output reaches participants with nobody in between.
 
 ### As a container
 

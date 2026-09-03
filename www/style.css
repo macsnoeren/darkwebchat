@@ -868,6 +868,19 @@ body {
   color: var(--text-dim);
 }
 
+/* Waarschuwing bij een suggestie die volgde op een manipulatiepoging van het
+   bedrijf. Amber en niet rood: er is niets stuk, de operator moet alleen even
+   lezen wat hij doorstuurt. */
+.suggestion-warning {
+  font-size: 11px;
+  color: #f0b429;
+  border-left: 2px solid #f0b429;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  background: rgba(240, 180, 41, 0.08);
+  line-height: 1.5;
+}
+
 .suggestion-text {
   font-size: 12px;
   color: var(--text-bright);
