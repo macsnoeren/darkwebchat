@@ -57,6 +57,21 @@ how it is deployed as a Tor onion service.
 reply, has an Ollama model draft one, and posts it back as a suggestion an
 operator can use or ignore. It is optional — the chat works fully without it.
 
+**Waiting on a reply** means two things, and the second one is easy to leave
+out: the last message in the chat is the company's, *and* the AI has not already
+drafted something for that message. A suggestion is not a message — using one
+writes a reply into the chat, dismissing one does not — so without that second
+condition the chat looks exactly as unanswered after a suggestion as before it,
+and the agent drafts another one every polling round for as long as the operator
+leaves it alone. Each round is two model calls, which on a cloud model is
+somebody's quota. `ai_suggestions.message_id` records which message a suggestion
+answers, and `get_pending` skips a chat whose newest message already has one.
+
+The status of that suggestion deliberately does not matter. **Dismissing is "I
+will handle this myself"**, not "try again": the agent stays away until the
+company sends something new, which gives the chat a new last message and puts it
+back in the queue by itself.
+
 ```sh
 pip install -r bin/requirements.txt
 cp bin/config.py.sample bin/config.py     # then fill in API_KEY

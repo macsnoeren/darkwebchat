@@ -83,6 +83,10 @@ db.exec(`
     created_at TEXT NOT NULL
   );
 
+  -- message_id is het bericht waar deze suggestie een antwoord op is. Zonder
+  -- dat verband weet niets in dit bestand of de AI al gekeken heeft naar wat er
+  -- nu als laatste in de chat staat: een suggestie is geen bericht, dus het
+  -- gesprek ziet er na een suggestie precies zo uit als ervoor. Zie get_pending.
   CREATE TABLE IF NOT EXISTS ai_suggestions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     chatId     TEXT NOT NULL,
@@ -90,7 +94,8 @@ db.exec(`
     message    TEXT NOT NULL,
     level_up   INTEGER NOT NULL DEFAULT 0,
     timestamp  TEXT NOT NULL,
-    status     TEXT NOT NULL DEFAULT 'pending'
+    status     TEXT NOT NULL DEFAULT 'pending',
+    message_id INTEGER NOT NULL DEFAULT 0
   );
 
   -- Het geheugen van de onderhandeling: vraagprijs, of er een akkoord ligt, en
@@ -110,6 +115,16 @@ if (pragmaSuggestions.length > 0 && !pragmaSuggestions.some((c) => c.name === "s
   db.exec(`ALTER TABLE ai_suggestions ADD COLUMN state_json TEXT`);
   db.exec(`ALTER TABLE ai_suggestions ADD COLUMN warning TEXT NOT NULL DEFAULT ''`);
   console.log("Migratie: state_json en warning toegevoegd aan ai_suggestions.");
+}
+
+// Migration: een suggestie weet sinds deze versie welk bericht hij beantwoordt.
+// Bestaande rijen houden 0 en tellen dus nergens als antwoord mee: elke chat die
+// nu openstaat krijgt na deze migratie nog één suggestie, en komt daarna tot
+// rust. Dat is de goede kant om het mis te hebben — een keer te veel gekeken is
+// hersteld met één klik, een keer te weinig is een gemist antwoord.
+if (pragmaSuggestions.length > 0 && !pragmaSuggestions.some((c) => c.name === "message_id")) {
+  db.exec(`ALTER TABLE ai_suggestions ADD COLUMN message_id INTEGER NOT NULL DEFAULT 0`);
+  console.log("Migratie: message_id toegevoegd aan ai_suggestions.");
 }
 
 // Seed default tokens als de tabel leeg is
@@ -251,6 +266,32 @@ function saveMessage(chatId, msg) {
   ).run(chatId, msg.timestamp, msg.who, msg.chat, msg.company);
 }
 
+// Het id van het laatste bericht in een chat. De berichten in companieData
+// dragen dat niet: die zijn er om getoond te worden, en het id bestaat alleen in
+// de database. Daarom hier gevraagd en niet uit het geheugen gelezen.
+function lastMessageId(chatId) {
+  const row = db.prepare("SELECT MAX(id) AS id FROM messages WHERE chatId = ?").get(chatId);
+  return (row && row.id) || 0;
+}
+
+// De chats waarvan het laatste bericht al een suggestie heeft gekregen.
+//
+// De status doet er met opzet niet toe. Een suggestie die de operator negeert is
+// er een die hij zelf afhandelt, en een tweede laten maken is dan precies wat
+// hij niet vroeg — dat was de lus: de AI schrijft geen bericht, dus het gesprek
+// zag er na elke suggestie weer even onbeantwoord uit als ervoor, en om de 30
+// seconden werd er een nieuwe gemaakt. Stuurt het bedrijf wél weer iets, dan is
+// er een nieuw laatste bericht en hoort deze chat er vanzelf weer bij.
+function chatsAnsweredByAI() {
+  const rows = db.prepare(`
+    SELECT DISTINCT s.chatId
+    FROM ai_suggestions s
+    WHERE s.message_id > 0
+      AND s.message_id = (SELECT MAX(m.id) FROM messages m WHERE m.chatId = s.chatId)
+  `).all();
+  return new Set(rows.map((r) => r.chatId));
+}
+
 function resolveOtherSuggestions(chatId) {
   const pending = db.prepare("SELECT id FROM ai_suggestions WHERE chatId = ? AND status = 'pending'").all(chatId);
   if (pending.length > 0) {
@@ -325,14 +366,16 @@ app.get("/api", (req, res) => {
   const action = req.query.action || "";
 
   if (action === "get_pending") {
-    // Alleen chats met minstens één bedrijfsbericht retourneren
-    // en die niet actief geclaimd zijn door een andere agent
+    // Alleen chats waarvan het laatste bericht van het bedrijf is, waar de AI
+    // nog niet naar dat bericht heeft gekeken, en die niet actief geclaimd zijn
+    // door een andere agent.
+    const answered = chatsAnsweredByAI();
     const tasks = Object.entries(companieData)
       .filter(([chatId, data]) => {
         const claim = claims[chatId];
         const lastMsg = data.chat[data.chat.length - 1];
         const lastIsCompany = lastMsg && lastMsg.who === "company";
-        return lastIsCompany && (!claim || claimExpired(claim));
+        return lastIsCompany && !answered.has(chatId) && (!claim || claimExpired(claim));
       })
       .map(([chatId, data]) => ({
         team_id:      chatId,
@@ -389,6 +432,12 @@ app.post("/api", (req, res) => {
     const ts = getTimeStamp();
     const cleanMessage = message.replace(/^[\s\S]*?🤖[^\n]*\n+/, "").trim() || message.trim();
 
+    // Het bericht waar deze suggestie een antwoord op is, vastgelegd vóór er
+    // iets geschreven wordt: bij auto-reply komt het antwoord er hieronder als
+    // bericht bij, en dan zou MAX(id) het antwoord zelf aanwijzen in plaats van
+    // de vraag.
+    const answersMessageId = lastMessageId(chatId);
+
     // De agent stelt een bijgewerkte staat voor. Opslaan doen we hem hier nog
     // niet — dat gebeurt pas als dit bericht ook echt verstuurd wordt.
     const stateJson = body.state ? JSON.stringify(body.state) : null;
@@ -408,8 +457,8 @@ app.post("/api", (req, res) => {
       resolveOtherSuggestions(chatId);
       promoteState(chatId, stateJson);
       db.prepare(
-        "INSERT INTO ai_suggestions (chatId, agent_id, message, level_up, timestamp, status, state_json, warning) VALUES (?, ?, ?, ?, ?, 'auto-sent', ?, ?)"
-      ).run(chatId, agentId, cleanMessage, levelUp, ts, stateJson, warning);
+        "INSERT INTO ai_suggestions (chatId, agent_id, message, level_up, timestamp, status, state_json, warning, message_id) VALUES (?, ?, ?, ?, ?, 'auto-sent', ?, ?, ?)"
+      ).run(chatId, agentId, cleanMessage, levelUp, ts, stateJson, warning, answersMessageId);
       if (warning) console.log(`[AI] ${warning} (chat ${chatId})`);
       console.log(`[AI] Auto-reply verstuurd voor chat ${chatId} via ${agentId}`);
       return res.json({ ok: true, auto_sent: true });
@@ -417,8 +466,8 @@ app.post("/api", (req, res) => {
 
     // Handmatige modus: sla op als suggestie voor de operator
     const result = db.prepare(
-      "INSERT INTO ai_suggestions (chatId, agent_id, message, level_up, timestamp, status, state_json, warning) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)"
-    ).run(chatId, agentId, cleanMessage, levelUp, ts, stateJson, warning);
+      "INSERT INTO ai_suggestions (chatId, agent_id, message, level_up, timestamp, status, state_json, warning, message_id) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)"
+    ).run(chatId, agentId, cleanMessage, levelUp, ts, stateJson, warning, answersMessageId);
 
     const suggestion = {
       id:        result.lastInsertRowid,
